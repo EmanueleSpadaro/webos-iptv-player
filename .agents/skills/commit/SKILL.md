@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Stage and commit changes in this repo — full test suites first, an exact message approved by the user, no trailers, 72-column lines. Use whenever the user asks to commit.
+description: Stage and commit changes in this repo — tests scoped to the change first, an exact message approved by the user, no trailers, 72-column lines. Use whenever the user asks to commit.
 ---
 
 # Commit
@@ -8,18 +8,26 @@ description: Stage and commit changes in this repo — full test suites first, a
 Only commit or push when the user asks. Commit **directly to `main`** — no
 feature branch, no PR.
 
-## 1. Run both full suites
+## 1. Test what the change touches
 
-Against the final changes, run:
+Run tests against the final changes, scoped to what they can affect:
 
-```bash
-npm test
-npm run test:e2e
-```
+- **No code:** docs, skills, comments, or other files nothing executes
+  need no tests.
+- **Clear scope:** run the colocated unit tests of the touched modules and
+  the E2E specs covering the touched views, e.g.
+  `npx vitest run src/foo.test.ts` and
+  `npx playwright test e2e/foo.spec.ts`. Shared code (`src/utils/`,
+  `src/navigation/`, `css/main.css`, `css/themes.css`) affects its
+  callers too, so include their tests.
+- **Unclear scope:** run both full suites, `npm test` and
+  `npm run test:e2e`. That covers build, config, or dependency changes,
+  and anything whose blast radius you can't name with confidence.
 
-Targeted runs while iterating never replace these. Do not commit unless both
-pass after the last code change. If either fails, fix it (or report it) and
-rerun.
+Also run `npm run typecheck` and `npm run lint` for any code change, and
+`npm run service:smoke` for `bundled-service/`. State the scope you chose
+and the commands you ran. Do not commit unless they pass after the last
+code change; if one fails, fix it (or report it) and rerun.
 
 ## 2. Stage
 

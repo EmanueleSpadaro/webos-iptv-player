@@ -207,4 +207,4 @@ build constant; `scripts/sync-version.mjs` runs on `npm version`.
 - **Done** means `npm run typecheck`, `npm run lint`, and the relevant tests
   pass. Then run the `feature-review` skill for any finished feature.
 - **Git:** commit directly to `main`, only when asked, via the `commit`
-  skill — full suites first, user-approved message, lines ≤ 72, no trailers.
+  skill — scoped tests first, user-approved message, lines ≤ 72, no trailers.

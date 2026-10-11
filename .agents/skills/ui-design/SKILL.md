@@ -187,6 +187,11 @@ broken.
   theme*.
 - Status colors carry meaning (live = danger red, health dots); don't
   reuse them decoratively.
+- **State must be conspicuous in every theme — measure it.** A state cue
+  (lock, badge, dot, icon) needs at least 3:1 against every surface it can
+  sit on, and its text 4.5:1. Compute the ratios for all themes rather than
+  judging one screenshot; light themes fail first (pale amber or yellow on
+  a pale surface).
 
 ## Overlays and glass styles
 
@@ -310,6 +315,8 @@ Run this before calling a UI change done; fix or justify every miss.
       clears on leave and never changes the legend.
 - [ ] Right in every theme, including the light ones; accent fills carry
       white text; scrims follow the theme.
+- [ ] State cues measure at least 3:1 (text 4.5:1) against their surfaces
+      in every theme, not just the one in the screenshot.
 - [ ] Overlays use overlay tokens and look right in Dark and Frosted.
 - [ ] Motion gates only costly animations by mode; close mirrors open.
 - [ ] Labels, errors, and empty states follow "Words on screen".
