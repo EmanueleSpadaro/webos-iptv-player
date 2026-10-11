@@ -18,6 +18,7 @@ Procedural workflows live in `.agents/skills/` (open Agent Skills format;
 | `ui-copy` | Adding or changing any user-visible string, naming a feature, or translating. |
 | `legacy-engine` | Adding browser APIs/polyfills, editing CSS layout or `css/legacy-*.css`, writing or debugging E2E tests. |
 | `webos-device` | Installing on a TV, or debugging what only reproduces on device. |
+| `user-choice` | Asking the user to pick, approve, or confirm anything. |
 
 ## Key rules
 

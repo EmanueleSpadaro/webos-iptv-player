@@ -40,8 +40,12 @@ wrong, and say so briefly.
 
 ## 3. Let the user choose
 
-Present the findings as a multi-select (`ask_user` in Copilot CLI, or the
-equivalent prompt), defaulting to the bugs. Fix only what the user picks.
+Present the findings, then let the user pick, defaulting to the bugs. Fix
+only what the user picks.
+
+Ask through the `user-choice` skill, so the full ranked list — each
+finding's problem, repro, and suggested fix — shows as main text right
+above the options.
 
 Every bug fixed here gets a regression test that fails without the fix and
 passes with it.

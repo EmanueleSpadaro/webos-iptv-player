@@ -62,6 +62,9 @@ EOF
 Do not run `git commit` until the user approves that exact message. If they
 edit it, show the revised version again.
 
+Ask through the `user-choice` skill, so the full heredoc shows as main
+text right above the options.
+
 ## Media for README or GitHub
 
 Upload with `gh image --repo lennylxx/webos-iptv-player -- <files>`; it
