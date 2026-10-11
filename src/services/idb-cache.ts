@@ -131,6 +131,7 @@ let scheduledPlaylist: {
   scheduledAt: number;
 } | null = null;
 let playlistFrame: number | null = null;
+let playlistGeneration = 0;
 let playlistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -209,13 +210,38 @@ function persistScheduledPlaylist(): void {
   ));
 }
 
+export interface PlaylistCacheToken {
+  signature: string;
+  generation: number;
+}
+
+// Taken when a refresh starts, so a response that outlives a source edit or a
+// cache clear is not stored under the new configuration.
+export function playlistCacheToken(): PlaylistCacheToken {
+  return { signature: playlistSourceSignature(), generation: playlistGeneration };
+}
+
 export function scheduleCachedPlaylist(
   channels: Channel[],
   epgSources: EpgSource[] = [],
   timestamp = Date.now(),
   refreshIntervalMs: number | null = CONFIG.DEFAULT_PLAYLIST_REFRESH_INTERVAL_MS,
+  token: PlaylistCacheToken = playlistCacheToken(),
 ): void {
   if (!channels.length) return;
+  if (
+    token.generation !== playlistGeneration
+    || token.signature !== playlistSourceSignature()
+  ) {
+    log.info(
+      'Playlist cache write skipped',
+      'event=playlist.cache.write.skipped',
+      'operation=schedule',
+      'reason=stale_refresh',
+      `channels=${String(channels.length)}`,
+    );
+    return;
+  }
   if (scheduledPlaylist) discardScheduledPlaylist('rescheduled');
   const scheduledAt = Date.now();
   scheduledPlaylist = {
@@ -223,7 +249,7 @@ export function scheduleCachedPlaylist(
     epgSources,
     timestamp,
     refreshIntervalMs,
-    sourceSignature: playlistSourceSignature(),
+    sourceSignature: token.signature,
     scheduledAt,
   };
   cancelPlaylistSchedule();
@@ -1117,7 +1143,16 @@ export async function setCachedCatalog(
   });
 }
 
+let catalogGeneration = 0;
+
+// Bumped on every clear so an in-flight background refresh can tell its
+// response predates the clear and must not repopulate the store.
+export function catalogCacheGeneration(): number {
+  return catalogGeneration;
+}
+
 export function clearCachedCatalog(): Promise<void> {
+  catalogGeneration++;
   return clearStore(CATALOG_STORE);
 }
 
@@ -1334,6 +1369,7 @@ function setCachedPlaylistWithSignature(
 
 export async function clearCachedPlaylist(): Promise<void> {
   discardScheduledPlaylist('cache_clear');
+  playlistGeneration++;
   try {
     await clearStore(PLAYLIST_STORE);
   } catch (err) {
@@ -1355,6 +1391,8 @@ export async function clearCachedPlaylist(): Promise<void> {
 
 export async function clearAllCachedData(): Promise<void> {
   discardScheduledPlaylist('cache_clear');
+  playlistGeneration++;
+  catalogGeneration++;
   return enqueueMutation(async () => {
     try {
       localStorage.removeItem(CONFIG.STORAGE_PREFIX + 'cached_playlist');

@@ -3,6 +3,7 @@ import {
   expect,
   routePlaylist,
   seedPlaylist,
+  PLAYLIST_URL,
   SAMPLE_M3U,
   type Page,
 } from './helpers';
@@ -249,4 +250,68 @@ test('dev-mode query replaces the reminder fallback activity', async ({ page }) 
   expect(fallback.replace).toBe(true);
   expect(devAlert.replace).toBe(true);
   expect(devAlert.method).toBe('luna://com.lennylxx.iptv.service/fireReminderAlert');
+});
+
+test('an expired playlist cache boots at once and refreshes in the background', async ({ page }) => {
+  const freshM3U = SAMPLE_M3U.replace('Channel Two', 'Channel Three');
+  let playlistRequests = 0;
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  // Seed once: re-seeding on reload would assign a new source id and change
+  // the cache's source signature, turning the reload into a cache miss.
+  await page.addInitScript((url) => {
+    if (!localStorage.getItem('iptv_playlists')) {
+      localStorage.setItem('iptv_playlists', JSON.stringify([{ name: 'Test', url }]));
+    }
+  }, PLAYLIST_URL);
+  await page.route('**/playlist.m3u', async (route) => {
+    playlistRequests++;
+    if (playlistRequests > 1) await refreshGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/x-mpegurl',
+      body: playlistRequests === 1 ? SAMPLE_M3U : freshM3U,
+    });
+  });
+
+  try {
+    await page.goto('/');
+    const names = page.locator('.channel-main .channel-name');
+    await expect(names).toHaveText(['Channel One', 'Channel Two']);
+
+    // The parsed-playlist write is deferred, so wait for it before ageing it.
+    await expect.poll(() => page.evaluate(() => new Promise<boolean>((resolve, reject) => {
+      const open = indexedDB.open('iptv');
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('playlist-cache', 'readwrite');
+        const store = tx.objectStore('playlist-cache');
+        let aged = false;
+        const cursor = store.openCursor();
+        cursor.onsuccess = () => {
+          const entry = cursor.result;
+          if (!entry) return;
+          const value = entry.value as { timestamp: number };
+          entry.update({ ...value, timestamp: value.timestamp - 7 * 24 * 60 * 60 * 1000 });
+          aged = true;
+          entry.continue();
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve(aged);
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    }))).toBe(true);
+
+    await page.reload();
+    await expect(names).toHaveText(['Channel One', 'Channel Two']);
+    await expect.poll(() => playlistRequests).toBe(2);
+
+    releaseRefresh();
+    await expect(names).toHaveText(['Channel One', 'Channel Three']);
+  } finally {
+    releaseRefresh();
+  }
 });

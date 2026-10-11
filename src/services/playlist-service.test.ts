@@ -16,6 +16,7 @@ const { storageMock, cacheMock, fetchTextMock } = vi.hoisted(() => ({
   cacheMock: {
     getCachedPlaylist: vi.fn(),
     scheduleCachedPlaylist: vi.fn(),
+    playlistCacheToken: vi.fn(() => ({ signature: 's1', generation: 0 })),
   },
   fetchTextMock: vi.fn(),
 }));
@@ -304,7 +305,18 @@ describe('PlaylistService.refresh', () => {
       [{ url: 'http://host1:8080/epg.xml', playlistIds: ['a'], kind: 'm3u' }],
       expect.any(Number),
       6 * 60 * 60 * 1000,
+      { signature: 's1', generation: 0 },
     );
+  });
+
+  it('binds the cache write to the sources the refresh started with', async () => {
+    const started = { signature: 'before', generation: 1 };
+    cacheMock.playlistCacheToken.mockReturnValueOnce(started);
+    cacheMock.playlistCacheToken.mockReturnValueOnce({ signature: 'after', generation: 2 });
+
+    await PlaylistService.refresh();
+
+    expect(cacheMock.scheduleCachedPlaylist.mock.calls[0][4]).toBe(started);
   });
 
   it('does not block the refreshed channel list on cache persistence', async () => {
@@ -876,6 +888,23 @@ describe('PlaylistService.load', () => {
     expect(fetchTextMock).not.toHaveBeenCalled();
   });
 
+  it('boots from an expired cache and exposes its age for the overdue refresh', async () => {
+    const intervalMs = 6 * 60 * 60 * 1000;
+    const timestamp = Date.now() - 2 * intervalMs;
+    const cached = [channel({ id: 'a', name: 'Alpha', group: 'News', playlistIds: ['P1'] })];
+    storageMock.getPlaylists.mockReturnValue([
+      { id: 'P1', name: 'P1', url: 'http://host/p1.m3u' },
+    ]);
+    cacheMock.getCachedPlaylist.mockImplementation(async (maxAgeMs: number | null) =>
+      maxAgeMs === null || Date.now() - timestamp < maxAgeMs
+        ? { channels: cached, epgSources: [], timestamp }
+        : null);
+
+    expect(await PlaylistService.load()).toEqual(cached);
+    expect(fetchTextMock).not.toHaveBeenCalled();
+    expect(PlaylistService.getNextRefreshDelayMs(intervalMs)).toBe(0);
+  });
+
   it('refreshes from the network on a cache miss', async () => {
     cacheMock.getCachedPlaylist.mockResolvedValue(null);
     storageMock.getPlaylists.mockReturnValue([{ name: 'P2', url: 'http://host2/p2.m3u' }]);
@@ -1185,6 +1214,7 @@ describe('PlaylistService customization', () => {
       PlaylistService.epgSources,
       expect.any(Number),
       6 * 60 * 60 * 1000,
+      { signature: 's1', generation: 0 },
     );
   });
 

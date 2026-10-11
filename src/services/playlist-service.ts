@@ -36,7 +36,7 @@ import {
   type XtreamLiveCategory,
   type XtreamLiveStream,
 } from './xtream-client';
-import { getCachedPlaylist, scheduleCachedPlaylist } from './idb-cache';
+import { getCachedPlaylist, playlistCacheToken, scheduleCachedPlaylist } from './idb-cache';
 import { isSourceEnabled } from '../utils/playlist';
 import { liveParentalRequest, ParentalControlService } from './parental-control';
 
@@ -179,7 +179,9 @@ class PlaylistServiceImpl {
       this.logLoadCompleted('none', 0, 0);
       return [];
     }
-    const cached = await getCachedPlaylist(StorageService.getPlaylistRefreshIntervalMs());
+    // Boot from an expired cache too; App schedules the overdue refresh in the
+    // background instead of blocking startup on a full download.
+    const cached = await getCachedPlaylist(null);
     if (cached) {
       this.failedSourceIds.clear();
       this.refreshTimestamp = cached.timestamp;
@@ -219,6 +221,7 @@ class PlaylistServiceImpl {
     options: PlaylistRefreshOptions = {},
   ): Promise<Channel[]> {
     const done = log.time('refresh');
+    const cacheToken = playlistCacheToken();
     const playlists = StorageService.getPlaylists().filter(isSourceEnabled);
     if (!playlists.length) {
       log.info('No playlist sources enabled');
@@ -485,6 +488,7 @@ class PlaylistServiceImpl {
         epgSources,
         refreshTimestamp,
         StorageService.getPlaylistRefreshIntervalMs(),
+        cacheToken,
       );
     } else {
       this.refreshTimestamp = null;

@@ -4,6 +4,7 @@ import { beforeEach, describe, it, expect, vi } from 'vitest';
 import type { Channel } from '../types';
 import { CONFIG } from '../config';
 import {
+  catalogCacheGeneration,
   clearAllCachedData,
   clearCachedCatalog,
   clearCachedPlaylist,
@@ -18,6 +19,7 @@ import {
   getCachedChannelHealth,
   getCachedSubtitle,
   migrateLegacyStreamMimeCache,
+  playlistCacheToken,
   scheduleCachedPlaylist,
   setCachedCatalog,
   setCachedEpg,
@@ -155,6 +157,14 @@ describe('idb-cache', () => {
 
     expect(await getCachedCatalog('x1|vod_categories')).toBeNull();
     expect(await getCachedStreamMime('http://host/live')).toBe('video/mp2t');
+  });
+
+  it('advances the catalog generation on every catalog clear', async () => {
+    const before = catalogCacheGeneration();
+    await clearCachedCatalog();
+    expect(catalogCacheGeneration()).toBe(before + 1);
+    await clearAllCachedData();
+    expect(catalogCacheGeneration()).toBe(before + 2);
   });
 
   it('includes stream MIME records in the shared cache eviction pass', async () => {
@@ -337,6 +347,34 @@ describe('idb-cache', () => {
       globalThis.cancelAnimationFrame = originalCancel;
       timer.mockRestore();
     }
+  });
+
+  it('drops a refresh result whose sources changed while it was loading', async () => {
+    localStorage.setItem('iptv_playlists', JSON.stringify([
+      { id: 'p1', name: 'Alpha', url: 'http://host/a' },
+    ]));
+    const token = playlistCacheToken();
+    localStorage.setItem('iptv_playlists', JSON.stringify([
+      { id: 'p2', name: 'Bravo', url: 'http://host/b' },
+    ]));
+
+    scheduleCachedPlaylist([channel('ch1')], [], Date.now(), null, token);
+    await flushCacheWrites();
+
+    expect(await getCachedPlaylist(null)).toBeNull();
+  });
+
+  it.each([
+    ['playlist cache', clearCachedPlaylist],
+    ['all caches', clearAllCachedData],
+  ])('drops a refresh result that was loading while clearing %s', async (_label, clear) => {
+    const token = playlistCacheToken();
+    await clear();
+
+    scheduleCachedPlaylist([channel('ch1')], [], Date.now(), null, token);
+    await flushCacheWrites();
+
+    expect(await getCachedPlaylist(null)).toBeNull();
   });
 
   it.each([

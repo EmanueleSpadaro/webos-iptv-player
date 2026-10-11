@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PlaylistEntry } from '../types';
 
-const { clientMock, cacheStore } = vi.hoisted(() => ({
+const { clientMock, cacheStore, cacheState } = vi.hoisted(() => ({
   clientMock: {
     getVodCategories: vi.fn(),
     getVodStreams: vi.fn(),
@@ -11,6 +11,7 @@ const { clientMock, cacheStore } = vi.hoisted(() => ({
     getSeriesInfo: vi.fn(),
   },
   cacheStore: new Map<string, { key: string; timestamp: number; data: unknown }>(),
+  cacheState: { generation: 0 },
 }));
 
 vi.mock('./storage-service', () => ({
@@ -24,6 +25,7 @@ vi.mock('./xtream-client', async (importOriginal) => ({
   createXtreamClient: () => clientMock,
 }));
 vi.mock('./idb-cache', () => ({
+  catalogCacheGeneration: vi.fn(() => cacheState.generation),
   getCachedCatalog: vi.fn(async (key: string) => cacheStore.get(key) ?? null),
   setCachedCatalog: vi.fn(async (key: string, data: unknown) => {
     cacheStore.set(key, { key, timestamp: Date.now(), data });
@@ -50,8 +52,12 @@ const account: PlaylistEntry = {
   id: 'x1', name: 'X', url: 'http://host:8080', source: 'xtream', xtream: { username: 'u', password: 'p' },
 };
 
+// Background refreshes chain a few promises; a macrotask drains them all.
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
 beforeEach(() => {
   cacheStore.clear();
+  cacheState.generation = 0;
   vi.clearAllMocks();
   vi.mocked(StorageService.getXtreamCatalogRefreshIntervalMs)
     .mockReturnValue(CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS);
@@ -108,26 +114,118 @@ describe('xtream-catalog', () => {
     expect(clientMock.getVodStreams).not.toHaveBeenCalled();
   });
 
-  it('re-fetches when the cached entry is stale', async () => {
+  it('serves a stale list at once and refreshes it in the background', async () => {
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|vod_categories', { key: 'x1|vod_categories', timestamp: stale, data: [{ id: 'old', name: 'Old' }] });
-    clientMock.getVodCategories.mockResolvedValue([{ id: '1', name: 'Cat A' }]);
-    const out = await loadVodCategories(account);
-    expect(out).toEqual([{ id: '1', name: 'Cat A' }]);
+    let release!: () => void;
+    clientMock.getVodCategories.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve([{ id: '1', name: 'Cat A' }]);
+    }));
+
+    expect(await loadVodCategories(account)).toEqual([{ id: 'old', name: 'Old' }]);
+    expect(clientMock.getVodCategories).toHaveBeenCalledTimes(1);
+    expect(setCachedCatalog).not.toHaveBeenCalled();
+
+    release();
+    await settle();
+    expect(setCachedCatalog).toHaveBeenCalledWith(
+      'x1|vod_categories',
+      [{ id: '1', name: 'Cat A' }],
+      CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS,
+    );
+    expect(await loadVodCategories(account)).toEqual([{ id: '1', name: 'Cat A' }]);
     expect(clientMock.getVodCategories).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to stale cache when a stale re-fetch returns empty', async () => {
+  it('shares one background refresh per key and detaches it from the caller signal', async () => {
+    const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
+    cacheStore.set('x1|vod_streams|1', { key: 'x1|vod_streams|1', timestamp: stale, data: [{ accountId: 'x1', streamId: 'old' }] });
+    clientMock.getVodStreams.mockResolvedValue([{ accountId: 'x1', streamId: '10' }]);
+    const controller = new AbortController();
+
+    await Promise.all([
+      loadVodStreams(account, '1', controller.signal),
+      loadVodStreams(account, '1'),
+    ]);
+    controller.abort();
+    await settle();
+
+    expect(clientMock.getVodStreams).toHaveBeenCalledTimes(1);
+    expect(clientMock.getVodStreams).toHaveBeenCalledWith('1', undefined);
+    expect(cacheStore.get('x1|vod_streams|1')?.data).toEqual([{ accountId: 'x1', streamId: '10' }]);
+  });
+
+  it('drops a background refresh that finishes after the catalog cache was cleared', async () => {
+    const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
+    cacheStore.set('x1|vod_categories', { key: 'x1|vod_categories', timestamp: stale, data: [{ id: 'old', name: 'Old' }] });
+    let release!: () => void;
+    clientMock.getVodCategories.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve([{ id: '1', name: 'Cat A' }]);
+    }));
+
+    await loadVodCategories(account);
+    cacheState.generation++;
+    cacheStore.clear();
+    release();
+    await settle();
+
+    expect(setCachedCatalog).not.toHaveBeenCalled();
+    expect(cacheStore.size).toBe(0);
+  });
+
+  it('runs at most two background refreshes at a time and queues the rest', async () => {
+    const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
+    for (const id of ['1', '2', '3']) {
+      cacheStore.set(`x1|vod_streams|${id}`, { key: `x1|vod_streams|${id}`, timestamp: stale, data: [{ accountId: 'x1', streamId: 'old' }] });
+    }
+    const releases = new Map<string, () => void>();
+    clientMock.getVodStreams.mockImplementation((id: string) => new Promise(resolve => {
+      releases.set(id, () => resolve([{ accountId: 'x1', streamId: `new${id}` }]));
+    }));
+
+    await Promise.all(['1', '2', '3'].map(id => loadVodStreams(account, id)));
+    expect(clientMock.getVodStreams.mock.calls.map(call => call[0])).toEqual(['1', '2']);
+
+    releases.get('1')!();
+    await settle();
+    expect(clientMock.getVodStreams.mock.calls.map(call => call[0])).toEqual(['1', '2', '3']);
+
+    releases.get('2')!();
+    releases.get('3')!();
+    await settle();
+    expect(cacheStore.get('x1|vod_streams|3')?.data).toEqual([{ accountId: 'x1', streamId: 'new3' }]);
+  });
+
+  it('skips a queued background refresh once the catalog cache is cleared', async () => {
+    const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
+    for (const id of ['1', '2', '3']) {
+      cacheStore.set(`x1|vod_streams|${id}`, { key: `x1|vod_streams|${id}`, timestamp: stale, data: [{ accountId: 'x1', streamId: 'old' }] });
+    }
+    const releases: Array<() => void> = [];
+    clientMock.getVodStreams.mockImplementation(() => new Promise(resolve => {
+      releases.push(() => resolve([]));
+    }));
+
+    await Promise.all(['1', '2', '3'].map(id => loadVodStreams(account, id)));
+    cacheState.generation++;
+    releases.forEach(release => release());
+    await settle();
+
+    expect(clientMock.getVodStreams).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the stale list when a background refresh returns empty', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|vod_streams|1', { key: 'x1|vod_streams|1', timestamp: stale, data: [{ accountId: 'x1', streamId: '10' }] });
     clientMock.getVodStreams.mockResolvedValue([]);
     const out = await loadVodStreams(account, '1');
+    await settle();
     expect(out).toEqual([{ accountId: 'x1', streamId: '10' }]);
     expect(setCachedCatalog).not.toHaveBeenCalled(); // an empty re-fetch must not overwrite the stale copy
     expect(warn).toHaveBeenCalledWith(
       '[Catalog]',
-      'Catalog refresh was empty; serving stale data',
+      'Catalog refresh was empty; keeping stale data',
       'event=xtream.catalog.stale',
       'resource=vod_streams',
       'reason=empty',
@@ -167,7 +265,7 @@ describe('xtream-catalog', () => {
     expect(getCachedCatalog).toHaveBeenCalledWith('x1|vod_categories');
   });
 
-  it('serves stale data after a failed refresh but surfaces cold-cache failures', async () => {
+  it('keeps stale data after a failed background refresh but surfaces cold-cache failures', async () => {
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|vod_categories', {
       key: 'x1|vod_categories',
@@ -180,6 +278,8 @@ describe('xtream-catalog', () => {
     ));
 
     await expect(loadVodCategories(account)).resolves.toEqual([{ id: 'old', name: 'Old' }]);
+    await settle();
+    expect(cacheStore.get('x1|vod_categories')?.data).toEqual([{ id: 'old', name: 'Old' }]);
     cacheStore.clear();
     await expect(loadVodCategories(account)).rejects.toMatchObject({ code: 'too_large' });
   });
@@ -197,19 +297,19 @@ describe('xtream-catalog', () => {
     expect(setCachedCatalog).not.toHaveBeenCalled();
   });
 
-  it('does not turn cancellation into a stale-cache success', async () => {
+  it('does not serve stale data to a cancelled caller', async () => {
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|vod_categories', {
       key: 'x1|vod_categories',
       timestamp: stale,
       data: [{ id: 'old', name: 'Old' }],
     });
-    clientMock.getVodCategories.mockRejectedValue(new XtreamRequestError(
-      'cancelled',
-      'Xtream request was cancelled',
-    ));
+    const controller = new AbortController();
+    controller.abort();
 
-    await expect(loadVodCategories(account)).rejects.toMatchObject({ code: 'cancelled' });
+    await expect(loadVodCategories(account, controller.signal))
+      .rejects.toMatchObject({ code: 'cancelled' });
+    expect(clientMock.getVodCategories).not.toHaveBeenCalled();
   });
 });
 
@@ -235,20 +335,24 @@ describe('xtream-catalog series', () => {
     expect(clientMock.getSeries).not.toHaveBeenCalled();
   });
 
-  it('re-fetches series when the cached list is stale', async () => {
+  it('serves a stale series list and refreshes it in the background', async () => {
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|series|1', { key: 'x1|series|1', timestamp: stale, data: [{ accountId: 'x1', seriesId: 'old' }] });
     clientMock.getSeries.mockResolvedValue([{ accountId: 'x1', seriesId: 's1' }]);
-    const out = await loadSeries(account, '1');
-    expect(out).toEqual([{ accountId: 'x1', seriesId: 's1' }]);
-    expect(clientMock.getSeries).toHaveBeenCalledTimes(1);
+    expect(await loadSeries(account, '1')).toEqual([{ accountId: 'x1', seriesId: 'old' }]);
+    await settle();
+    expect(clientMock.getSeries).toHaveBeenCalledWith('1', undefined);
+    expect(await loadSeries(account, '1')).toEqual([{ accountId: 'x1', seriesId: 's1' }]);
   });
 
-  it('falls back to a stale series list when a re-fetch returns empty', async () => {
+  it('keeps a stale series list when a background refresh returns empty', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|series|1', { key: 'x1|series|1', timestamp: stale, data: [{ accountId: 'x1', seriesId: 's1' }] });
     clientMock.getSeries.mockResolvedValue([]);
     const out = await loadSeries(account, '1');
+    await settle();
+    warn.mockRestore();
     expect(out).toEqual([{ accountId: 'x1', seriesId: 's1' }]);
     expect(setCachedCatalog).not.toHaveBeenCalled();
   });
@@ -304,20 +408,24 @@ describe('xtream-catalog whole-catalog (search)', () => {
     expect(clientMock.getVodStreams).not.toHaveBeenCalled();
   });
 
-  it('re-fetches the full VOD catalog when the cache is stale', async () => {
+  it('serves a stale full VOD catalog and refreshes it in the background', async () => {
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|vod_all', { key: 'x1|vod_all', timestamp: stale, data: [{ accountId: 'x1', streamId: 'old' }] });
     clientMock.getVodStreams.mockResolvedValue([{ accountId: 'x1', streamId: '10' }]);
-    const out = await loadAllVodStreams(account);
-    expect(out).toEqual([{ accountId: 'x1', streamId: '10' }]);
-    expect(clientMock.getVodStreams).toHaveBeenCalledTimes(1);
+    expect(await loadAllVodStreams(account)).toEqual([{ accountId: 'x1', streamId: 'old' }]);
+    await settle();
+    expect(clientMock.getVodStreams).toHaveBeenCalledWith(undefined, undefined);
+    expect(await loadAllVodStreams(account)).toEqual([{ accountId: 'x1', streamId: '10' }]);
   });
 
-  it('falls back to a stale full VOD catalog when a re-fetch returns empty', async () => {
+  it('keeps a stale full VOD catalog when a background refresh returns empty', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|vod_all', { key: 'x1|vod_all', timestamp: stale, data: [{ accountId: 'x1', streamId: '10' }] });
     clientMock.getVodStreams.mockResolvedValue([]);
     const out = await loadAllVodStreams(account);
+    await settle();
+    warn.mockRestore();
     expect(out).toEqual([{ accountId: 'x1', streamId: '10' }]);
     expect(setCachedCatalog).not.toHaveBeenCalled();
   });
@@ -341,20 +449,24 @@ describe('xtream-catalog whole-catalog (search)', () => {
     expect(clientMock.getSeries).not.toHaveBeenCalled();
   });
 
-  it('re-fetches the full series catalog when the cached entry is stale', async () => {
+  it('serves a stale full series catalog and refreshes it in the background', async () => {
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|series_all', { key: 'x1|series_all', timestamp: stale, data: [{ accountId: 'x1', seriesId: 'old' }] });
     clientMock.getSeries.mockResolvedValue([{ accountId: 'x1', seriesId: 's1', name: 'Series One' }]);
-    const out = await loadAllSeries(account);
-    expect(out).toEqual([{ accountId: 'x1', seriesId: 's1', name: 'Series One' }]);
-    expect(clientMock.getSeries).toHaveBeenCalledTimes(1);
+    expect(await loadAllSeries(account)).toEqual([{ accountId: 'x1', seriesId: 'old' }]);
+    await settle();
+    expect(await loadAllSeries(account))
+      .toEqual([{ accountId: 'x1', seriesId: 's1', name: 'Series One' }]);
   });
 
-  it('falls back to a stale full series catalog when a re-fetch returns empty', async () => {
+  it('keeps a stale full series catalog when a background refresh returns empty', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
     cacheStore.set('x1|series_all', { key: 'x1|series_all', timestamp: stale, data: [{ accountId: 'x1', seriesId: 's1' }] });
     clientMock.getSeries.mockResolvedValue([]);
     const out = await loadAllSeries(account);
+    await settle();
+    warn.mockRestore();
     expect(out).toEqual([{ accountId: 'x1', seriesId: 's1' }]);
     expect(setCachedCatalog).not.toHaveBeenCalled();
   });

@@ -4,7 +4,8 @@ import {
   isXtreamRequestCancelled,
   XtreamRequestError,
 } from './xtream-client';
-import { getCachedCatalog, setCachedCatalog } from './idb-cache';
+import { catalogCacheGeneration, getCachedCatalog, setCachedCatalog } from './idb-cache';
+import { CONFIG } from '../config';
 import { createLogger } from '../utils/logger';
 import { StorageService } from './storage-service';
 
@@ -12,8 +13,9 @@ const log = createLogger('Catalog');
 
 // Per-account cached catalog access. Categories are cheap and fetched up front;
 // streams are fetched per category on demand. Each result is cached in
-// IndexedDB (keyed `${accountId}|action[|param]`) and served while within TTL.
-// On a failed/empty re-fetch we keep serving the stale copy rather than a blank.
+// IndexedDB (keyed `${accountId}|action[|param]`). Expired lists are served
+// at once and refreshed in the background; expired details are re-fetched
+// first. A failed/empty re-fetch keeps the stale copy rather than a blank.
 
 function clientFor(a: PlaylistEntry) {
   return createXtreamClient(
@@ -42,57 +44,98 @@ function resourceFor(key: string): string {
   return key.split('|')[1] || 'unknown';
 }
 
-// Serve a fresh cache hit; otherwise re-fetch a list, caching a non-empty result
-// and falling back to the stale copy on an empty/failed re-fetch (logged, since
-// the fallback is otherwise invisible — the caller just sees old data).
 function ensureActive(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new XtreamRequestError('cancelled', 'Xtream request was cancelled');
   }
 }
 
+const queuedRefreshKeys = new Set<string>();
+const refreshQueue: Array<() => Promise<void>> = [];
+let activeRefreshes = 0;
+
+// Large lists can each be tens of megabytes, so stale ones are re-fetched a
+// few at a time instead of all at once when Movies, Series, and Search open.
+function pumpRefreshQueue(): void {
+  while (
+    activeRefreshes < CONFIG.XTREAM.BACKGROUND_REFRESH_CONCURRENCY
+    && refreshQueue.length
+  ) {
+    const run = refreshQueue.shift()!;
+    activeRefreshes++;
+    const done = (): void => {
+      activeRefreshes--;
+      pumpRefreshQueue();
+    };
+    run().then(done, done);
+  }
+}
+
+// Re-fetch an expired list without the caller's signal, so leaving the view
+// does not cancel it. A non-empty result replaces the cache for the next open;
+// an empty or failed one keeps the old copy. Concurrent callers share one task.
+function refreshListInBackground<T>(
+  key: string,
+  cachedCount: number,
+  refetch: (signal?: AbortSignal) => Promise<T[]>,
+): void {
+  if (queuedRefreshKeys.has(key)) return;
+  queuedRefreshKeys.add(key);
+  const generation = catalogCacheGeneration();
+  refreshQueue.push(async () => {
+    try {
+      if (generation !== catalogCacheGeneration()) return;
+      const data = await refetch();
+      if (generation !== catalogCacheGeneration()) return;
+      if (!data.length) {
+        log.warn(
+          'Catalog refresh was empty; keeping stale data',
+          'event=xtream.catalog.stale',
+          `resource=${resourceFor(key)}`,
+          'reason=empty',
+          `items=${cachedCount}`,
+        );
+        return;
+      }
+      await setCachedCatalog(key, data, StorageService.getXtreamCatalogRefreshIntervalMs());
+      log.debug('refreshed', key, `(${data.length})`);
+    } catch (err) {
+      log.warn(
+        'Catalog refresh failed; keeping stale data',
+        'event=xtream.catalog.stale',
+        `resource=${resourceFor(key)}`,
+        'reason=request_failed',
+        `items=${cachedCount}`,
+        err,
+      );
+    } finally {
+      queuedRefreshKeys.delete(key);
+    }
+  });
+  pumpRefreshQueue();
+}
+
+// Serve any cached list at once, re-fetching an expired one in the background;
+// only a cold cache waits on the network.
 async function cachedList<T>(
   key: string,
   signal: AbortSignal | undefined,
-  refetch: () => Promise<T[]>,
+  refetch: (signal?: AbortSignal) => Promise<T[]>,
 ): Promise<T[]> {
   ensureActive(signal);
   const cached = await getCachedCatalog<T[]>(key);
   ensureActive(signal);
-  if (cached && fresh(cached.timestamp)) { log.debug('hit', key, `(${cached.data.length})`); return cached.data; }
-  let data: T[];
-  try {
-    data = await refetch();
-  } catch (err) {
-    if (isXtreamRequestCancelled(err)) throw err;
-    if (cached) {
-      log.warn(
-        'Catalog refresh failed; serving stale data',
-        'event=xtream.catalog.stale',
-        `resource=${resourceFor(key)}`,
-        'reason=request_failed',
-        `items=${cached.data.length}`,
-        err,
-      );
-      return cached.data;
-    }
-    throw err;
+  if (cached) {
+    if (!fresh(cached.timestamp)) refreshListInBackground(key, cached.data.length, refetch);
+    log.debug('hit', key, `(${cached.data.length})`);
+    return cached.data;
   }
+  const data = await refetch(signal);
   ensureActive(signal);
   if (data.length) {
     await setCachedCatalog(key, data, StorageService.getXtreamCatalogRefreshIntervalMs());
     log.debug('fetched', key, `(${data.length})`);
     return data;
-  }
-  if (cached) {
-    log.warn(
-      'Catalog refresh was empty; serving stale data',
-      'event=xtream.catalog.stale',
-      `resource=${resourceFor(key)}`,
-      'reason=empty',
-      `items=${cached.data.length}`,
-    );
-    return cached.data;
   }
   log.warn(
     'Catalog returned no items and has no cache',
@@ -160,7 +203,7 @@ export function loadVodCategories(
   return cachedList(
     `${account.id}|vod_categories`,
     signal,
-    () => clientFor(account).getVodCategories(signal),
+    requestSignal => clientFor(account).getVodCategories(requestSignal),
   );
 }
 
@@ -172,7 +215,7 @@ export function loadVodStreams(
   return cachedList(
     `${account.id}|vod_streams|${categoryId}`,
     signal,
-    () => clientFor(account).getVodStreams(categoryId, signal),
+    requestSignal => clientFor(account).getVodStreams(categoryId, requestSignal),
   );
 }
 
@@ -195,7 +238,7 @@ export function loadSeriesCategories(
   return cachedList(
     `${account.id}|series_categories`,
     signal,
-    () => clientFor(account).getSeriesCategories(signal),
+    requestSignal => clientFor(account).getSeriesCategories(requestSignal),
   );
 }
 
@@ -207,7 +250,7 @@ export function loadSeries(
   return cachedList(
     `${account.id}|series|${categoryId}`,
     signal,
-    () => clientFor(account).getSeries(categoryId, signal),
+    requestSignal => clientFor(account).getSeries(categoryId, requestSignal),
   );
 }
 
@@ -230,7 +273,7 @@ export function loadAllVodStreams(
   return cachedList(
     `${account.id}|vod_all`,
     signal,
-    () => clientFor(account).getVodStreams(undefined, signal),
+    requestSignal => clientFor(account).getVodStreams(undefined, requestSignal),
   );
 }
 
@@ -241,6 +284,6 @@ export function loadAllSeries(
   return cachedList(
     `${account.id}|series_all`,
     signal,
-    () => clientFor(account).getSeries(undefined, signal),
+    requestSignal => clientFor(account).getSeries(undefined, requestSignal),
   );
 }

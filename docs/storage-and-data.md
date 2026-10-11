@@ -216,9 +216,9 @@ invalidates a structurally valid but now unrelated parsed playlist.
 
 | Category | Refresh setting | Read behavior |
 | --- | --- | --- |
-| Playlist | Off, 1, 3, 6, 12, or 24 hours; default 6 | Requires matching payload version, source signature, and non-empty channels. The current setting is compared with the stored timestamp; Off keeps a matching cache until its source configuration changes or the user refreshes all data |
+| Playlist | Off, 1, 3, 6, 12, or 24 hours; default 6 | Requires matching payload version, source signature, and non-empty channels. Startup uses a matching cache at any age; the current setting is compared with the stored timestamp to schedule the next refresh, which runs at once in the background when the cache is overdue. Off keeps a matching cache until its source configuration changes or the user refreshes all data |
 | Program guide | Off, 1, 3, 6, 12, or 24 hours; default 6 | Each source retains its own timestamp. Off stops periodic refresh and ignores age, but a missing or structurally invalid source is still downloaded once so a cold cache can populate |
-| Xtream catalog | 1, 3, 6, 12, or 24 hours; default 6 | Callers compare each entry's timestamp with the current setting. There is no Off option, so Movies, Series, and Search cannot remain permanently stale |
+| Xtream catalog | 1, 3, 6, 12, or 24 hours; default 6 | Callers compare each entry's timestamp with the current setting. An expired list (categories, category items, or the whole Search catalog) is returned at once and re-fetched in the background for the next open; an expired detail is re-fetched before it is shown. There is no Off option, so Movies, Series, and Search cannot remain permanently stale |
 | Media probe | No expiry | Stored in the catalog category and still subject to LRU/budget cleanup |
 | Stream MIME probe | 7 days | Expired reads become misses; records participate in catalog LRU and accounting |
 | Downloaded subtitle | 30 days | An expired read becomes a miss and deletes the record |
@@ -232,8 +232,16 @@ write this bookkeeping does not turn a valid cache hit into a miss.
 The three settings are under **Settings → Advanced**. `CONFIG` provides their
 defaults; runtime freshness uses the saved preferences and the age of the
 loaded data. Off stops periodic channel-list or program-guide refresh, while
-still allowing a missing guide cache to populate. Xtream catalogs refresh when
-Movies, Series, or Search accesses expired data and do not have an Off option.
+still allowing a missing guide cache to populate. Only a cold cache blocks
+startup on a channel-list download; an overdue one is shown first and refreshed
+in the background. Xtream catalogs refresh when Movies, Series, or Search
+accesses expired data and do not have an Off option. Background catalog
+refreshes are shared per cache key, run at most two at a time with the rest
+queued, survive leaving the view, keep the stale copy on a failed or empty
+response, and are discarded if the catalog cache is cleared while they are
+queued or in flight. A channel-list refresh records the source configuration
+and cache state it started with; if either changes before it finishes, its
+result is not written to the cache.
 
 An incomplete automatic channel-list refresh keeps the previous complete list
 instead of publishing partial data. **Refresh All Data** remains available in
