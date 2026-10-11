@@ -35,8 +35,17 @@ import { THEMES, OVERLAY_STYLES, TEXT_SIZES, DEFAULT_TEXT_SIZE, type ThemeMeta, 
 import { previewTheme, applyTextSize } from '../services/theme-service';
 import { showToast } from './toast';
 import { ConfirmationPrompt } from './confirmation-prompt';
+import { sourceToggle, toggleGroup } from './toggle-controls';
+import {
+  closeDropdown,
+  commitDropdownOption,
+  dropdown,
+  toggleDropdown,
+} from './dropdown';
 import qrcode from 'qrcode-generator';
 import { createLogger } from '../utils/logger';
+import { ParentalControlService } from '../services/parental-control';
+import { parentalPinSupported } from '../services/parental-pin';
 import {
   formatNumber,
   localeOptions,
@@ -59,6 +68,7 @@ import {
   DATABASE_ICON,
   GLOBE_ICON,
   GUIDE_ICON,
+  LOCK_ICON,
   NAV_HORIZONTAL_ICON,
   NAV_VERTICAL_ICON,
   PLAYBACK_ICON,
@@ -150,18 +160,6 @@ function themeSwatch(theme: ThemeMeta, activeId: string): Safe {
       </span>
       <span class="theme-swatch-name">${theme.name}</span>
     </button>`;
-}
-
-/** A single-select toggle group: connected buttons, the active one filled.
- *  Shared by every toggle row (styled via .toggle-group in settings.css). */
-function toggleGroup(id: string, options: { value: string; label: string }[], active: string) {
-  return html`
-    <div class="toggle-group" id="${id}">
-      ${options.map(o => html`
-        <button class="toggle-option ${o.value === active ? 'active' : ''}"
-                data-focusable data-value="${o.value}">${o.label}</button>
-      `)}
-    </div>`;
 }
 
 /** Preferred-subtitle-language options for the online-subtitle search ranking.
@@ -295,29 +293,6 @@ function settingsNavItem(category: typeof SETTINGS_CATEGORIES[number], active: b
   `;
 }
 
-/** Custom single-select dropdown — remote/D-pad friendly and app-styled (the app
- *  uses no native `<select>`). The trigger toggles the menu; each option carries a
- *  `data-dropdown-value`; the chosen value lives on the root's `data-value`. */
-function dropdown(id: string, options: { value: string; label: string }[], active: string) {
-  const current = options.find(o => o.value === active) ?? options[0];
-  return html`
-    <div class="dropdown" id="${id}" data-value="${active}">
-      <span class="dropdown-sizer" aria-hidden="true">
-        ${options.map(o => html`<span>${o.label}</span>`)}
-      </span>
-      <button class="dropdown-trigger" data-focusable data-dropdown-trigger>
-        <span class="dropdown-current">${current.label}</span>
-        <span class="dropdown-caret"></span>
-      </button>
-      <div class="dropdown-menu">
-        ${options.map(o => html`
-          <button class="dropdown-option ${o.value === active ? 'active' : ''}"
-                  data-focusable data-dropdown-value="${o.value}">${o.label}</button>
-        `)}
-      </div>
-    </div>`;
-}
-
 function disabledDropdown(id: string, label: string): Safe {
   return html`
     <div class="dropdown epg-offset-unavailable" id="${id}" data-value="">
@@ -327,18 +302,6 @@ function disabledDropdown(id: string, label: string): Safe {
         <span class="dropdown-caret"></span>
       </button>
     </div>`;
-}
-
-function sourceToggle(enabled: boolean): Safe {
-  return html`
-    <button class="source-toggle ${enabled ? 'active' : ''}" data-focusable
-            data-enabled="${enabled ? 'true' : 'false'}"
-            aria-pressed="${enabled ? 'true' : 'false'}">
-      <span class="source-toggle-track" aria-hidden="true">
-        <span class="source-toggle-knob"></span>
-      </span>
-      <span class="source-toggle-label">${t(enabled ? 'settings.on' : 'settings.off')}</span>
-    </button>`;
 }
 
 function uploadRow(pl: PlaylistEntry, enabled = isSourceEnabled(pl)): Safe {
@@ -493,6 +456,7 @@ export class Settings {
   private categorySyncFrame: number | null = null;
   private categoryFocusFrame: number | null = null;
   private onManageReminders: () => void;
+  private onManageParentalControls: () => void;
   private healthController: AbortController | null = null;
   private healthCheckPromise: Promise<void> | null = null;
   private healthProgress: ChannelHealthProgress | null = null;
@@ -504,11 +468,18 @@ export class Settings {
     onSave: (action: SaveAction) => void | Promise<void>,
     onChannelsChanged: () => void = () => {},
     onManageReminders: () => void = () => {},
+    onManageParentalControls: () => void = () => {},
+    private authorizeLiveEditing: (name: string, proceed: () => void) => void =
+      (_name, proceed) => proceed(),
+    private authorizeSourceRemoval:
+      (id: string, proceed: () => void, turnOff?: boolean) => void =
+      (_id, proceed) => proceed(),
   ) {
     this.container = container;
     this.onSave = onSave;
     this.onChannelsChanged = onChannelsChanged;
     this.onManageReminders = onManageReminders;
+    this.onManageParentalControls = onManageParentalControls;
     this.nav = new SpatialNav(container, (el) => this.onNavFocus(el));
 
     // Mouse/pointer support: clicking a focusable element behaves like remote OK.
@@ -619,6 +590,10 @@ export class Settings {
       value: size,
       label: size === DEFAULT_TEXT_SIZE ? t('settings.textSizeDefault', { percent: size }) : `${size}%`,
     }));
+    const parentalSupported = parentalPinSupported();
+    const parentalStatus = t(ParentalControlService.enabled
+      ? 'parental.statusOn'
+      : 'parental.statusOff');
 
     this.container.innerHTML = String(html`
       <div class="settings-view">
@@ -655,6 +630,22 @@ export class Settings {
                   <h3 class="settings-section-title">${t('settings.deviceSetup')}</h3>
                   <div class="source-box setup-box-info device-setup-card"
                        id="setup-info">${t('settings.checkingSetup')}</div>
+                </div>
+              </div>
+              <div class="settings-section">
+                <h3 class="settings-section-title parental-entry-title">${t('settings.parentalControls')}<span
+                    class="parental-entry-status ${ParentalControlService.enabled ? 'is-on' : ''}">${
+                    raw(LOCK_ICON)}${parentalStatus}</span></h3>
+                <div class="settings-item settings-item--action">
+                  <button class="btn ${ParentalControlService.configured
+                    ? 'btn-secondary'
+                    : 'btn-primary'}" ${parentalSupported ? raw('data-focusable') : raw('disabled')}
+                    id="manage-parental-controls">
+                    ${t(ParentalControlService.configured ? 'parental.manage' : 'parental.turnOn')}
+                  </button>
+                  <div class="settings-item-hint">${t(parentalSupported
+                    ? 'parental.settingsHint'
+                    : 'parental.unavailable')}</div>
                 </div>
               </div>
             </div>
@@ -1280,7 +1271,7 @@ export class Settings {
     } else if (el.id === 'add-playlist') {
       this.addPlaylistEntry();
     } else if (el.classList.contains('remove-playlist')) {
-      this.removePlaylistEntry(el);
+      this.authorizeSourceRemoval(this.sourceId(el), () => this.removePlaylistEntry(el));
     } else if (el.id === 'add-epg-source') {
       this.addManualEpgSource();
     } else if (el.classList.contains('remove-epg-source')) {
@@ -1294,13 +1285,17 @@ export class Settings {
     } else if (el.id === 'add-xtream') {
       this.addXtreamEntry();
     } else if (el.classList.contains('remove-xtream')) {
-      this.removeXtreamEntry(el);
+      this.authorizeSourceRemoval(this.sourceId(el), () => this.removeXtreamEntry(el));
     } else if (el.classList.contains('check-xtream')) {
       void this.checkXtreamAccount(el);
     } else if (el.classList.contains('source-toggle')) {
-      this.toggleSource(el);
+      if (el.dataset.enabled === 'true') {
+        this.authorizeSourceRemoval(this.sourceId(el), () => this.toggleSource(el), true);
+      } else {
+        this.toggleSource(el);
+      }
     } else if (el.classList.contains('remove-upload')) {
-      void this.removeUpload(el.dataset.url!);
+      this.authorizeSourceRemoval(this.sourceId(el), () => void this.removeUpload(el.dataset.url!));
     } else if (el.hasAttribute('data-dropdown-trigger')) {
       this.toggleDropdown(el.closest<HTMLElement>('.dropdown'));
     } else if (el.classList.contains('dropdown-option')) {
@@ -1357,20 +1352,10 @@ export class Settings {
       this.cancelChannelHealthCheck();
     } else if (el.id === 'manage-reminders') {
       this.onManageReminders();
+    } else if (el.id === 'manage-parental-controls') {
+      this.onManageParentalControls();
     } else if (el.id === 'reset-customization') {
-      this.confirmationPrompt.show({
-        title: t('settings.resetCustomizationTitle'),
-        message: t('settings.resetCustomizationMessage'),
-        confirmLabel: t('common.reset'),
-        cancelLabel: t('common.cancel'),
-        onConfirm: () => {
-          ChannelCustomizationService.reset();
-          PlaylistService.applyCustomization();
-          this.onChannelsChanged();
-          showToast(t('settings.customizationReset'));
-        },
-        onCancel: () => {},
-      });
+      this.authorizeLiveEditing(t('settings.resetCustomization'), () => this.confirmResetCustomization());
     } else if (el.id === 'clear-recently-watched') {
       this.confirmationPrompt.show({
         title: t('settings.clearRecentTitle'),
@@ -1634,6 +1619,22 @@ export class Settings {
 
   // Live theme preview: focusing (D-pad) or hovering (pointer) a swatch previews
   // that theme app-wide; anything else falls back to the currently selected theme.
+  private confirmResetCustomization(): void {
+    this.confirmationPrompt.show({
+      title: t('settings.resetCustomizationTitle'),
+      message: t('settings.resetCustomizationMessage'),
+      confirmLabel: t('common.reset'),
+      cancelLabel: t('common.cancel'),
+      onConfirm: () => {
+        ChannelCustomizationService.reset();
+        PlaylistService.applyCustomization();
+        this.onChannelsChanged();
+        showToast(t('settings.customizationReset'));
+      },
+      onCancel: () => {},
+    });
+  }
+
   private onNavFocus(el: HTMLElement | null): void {
     this.container.querySelector('.settings-advanced-row.focused')
       ?.classList.remove('focused');
@@ -1792,23 +1793,11 @@ export class Settings {
   // Opening moves focus to the active option, or the first one when the stored
   // value is no longer offered.
   private toggleDropdown(dd: HTMLElement | null): void {
-    if (!dd) return;
-    const open = !dd.classList.contains('open');
-    const current = this.container.querySelector<HTMLElement>('.dropdown.open');
-    if (current && current !== dd) this.closeDropdown(current);
-    if (!open) {
-      this.closeDropdown(dd);
-      return;
-    }
-    dd.classList.toggle('open', open);
-    const opt = dd.querySelector<HTMLElement>('.dropdown-option.active') ?? dd.querySelector<HTMLElement>('.dropdown-option');
-    if (opt) this.nav.focus(opt);
+    toggleDropdown(this.container, this.nav, dd);
   }
 
   private closeDropdown(dd: HTMLElement): void {
-    dd.classList.remove('open');
-    const trigger = dd.querySelector<HTMLElement>('.dropdown-trigger');
-    if (trigger) this.nav.focus(trigger);
+    closeDropdown(this.nav, dd);
   }
 
   dismissDropdown(): boolean {
@@ -1821,14 +1810,8 @@ export class Settings {
   // Commit a dropdown option: record it on the root's data-value, update the
   // trigger label, close the menu, and return focus to the trigger.
   private selectDropdownOption(el: HTMLElement): void {
-    const dd = el.closest<HTMLElement>('.dropdown');
+    const dd = commitDropdownOption(el);
     if (!dd) return;
-    dd.dataset.value = el.dataset.dropdownValue ?? '';
-    dd.querySelectorAll('.dropdown-option').forEach(o => o.classList.remove('active'));
-    el.classList.add('active');
-    const cur = dd.querySelector('.dropdown-current');
-    if (cur) cur.textContent = el.textContent;
-    dd.classList.remove('open');
     // Text size previews live so the choice can be judged at its own scale;
     // showView() reverts it if Settings closes without saving.
     if (dd.id === 'text-size') applyTextSize(dd.dataset.value ?? '');
@@ -2085,6 +2068,10 @@ export class Settings {
       this.manualEpgSourcesFromEditor(),
       this.currentEpgOffsetSource(),
     );
+  }
+
+  private sourceId(el: HTMLElement): string {
+    return el.closest<HTMLElement>('[data-source-entry]')?.dataset.id ?? '';
   }
 
   private removePlaylistEntry(removeBtn: HTMLElement): void {

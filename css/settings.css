@@ -369,6 +369,11 @@
   height: 26px;
 }
 
+#manage-parental-controls:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
 .manual-epg-source-head .move-epg-earlier:disabled,
 .manual-epg-source-head .move-epg-later:disabled {
   cursor: default;
@@ -712,6 +717,41 @@
   min-width: 288px;
 }
 
+.parental-entry-title {
+  display: flex;
+  align-items: center;
+}
+
+/* A pill so the smaller status reads as centered against the 30px title. */
+.parental-entry-status {
+  display: flex;
+  align-items: center;
+  margin-left: 20px;
+  padding: 4px 14px 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 20px;
+}
+
+.parental-entry-status.is-on {
+  background: rgb(var(--warning-rgb) / 0.15);
+  color: var(--text-primary);
+}
+
+.parental-entry-status svg {
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.8;
+}
+
+.parental-entry-status.is-on svg {
+  stroke: var(--warning);
+}
+
 .channel-health-actions {
   display: flex;
   gap: 12px;
@@ -873,6 +913,11 @@
 .toggle-option:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 .toggle-option:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 .toggle-option + .toggle-option { margin-left: -2px; } /* collapse the shared edge into one divider */
+
+.toggle-option:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
 
 .toggle-option.active {
   background: var(--accent);

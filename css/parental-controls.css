@@ -1,0 +1,528 @@
+.parental-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 42px 54px 32px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+.parental-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 32px;
+  margin-bottom: 20px;
+}
+
+/* The rule ends at the groups column's divider in the three-column layout:
+   a 380px source column, then groups and items at flex 1 : 1.2, each with
+   33px of padding and border. */
+.parental-heading {
+  width: calc(380px + 33px + (100% - 380px - 66px) / 2.2);
+  display: flex;
+  align-items: flex-end;
+  gap: 32px;
+  border-bottom: 1px solid var(--border);
+}
+
+.parental-header h2 {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-size: 40px;
+}
+
+.playlist-tabs.parental-tabs {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.parental-tabs .playlist-tab {
+  padding: 12px 24px;
+  font-size: 24px;
+}
+
+.parental-header .parental-account {
+  position: relative;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  margin-left: auto;
+}
+
+.parental-account-name {
+  margin-right: 16px;
+  color: var(--text-secondary);
+  font-size: 22px;
+}
+
+.parental-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 56px;
+  margin: 4px 0 20px;
+}
+
+.parental-summary {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 20px;
+}
+
+.parental-summary svg {
+  width: 24px;
+  height: 24px;
+  margin-right: 10px;
+  fill: none;
+  stroke: var(--warning);
+  stroke-width: 1.8;
+}
+
+.parental-options-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-right: 26px;
+  overflow-y: auto;
+}
+
+.parental-options-section {
+  padding: 24px 0;
+}
+
+.parental-options-section:first-child {
+  padding-top: 8px;
+}
+
+.parental-options-section .settings-item + .settings-item {
+  margin-top: 28px;
+}
+
+.parental-options-pane .source-toggle {
+  justify-content: flex-start;
+}
+
+.parental-options-off .parental-options-rules {
+  opacity: .62;
+}
+
+.parental-options-actions {
+  display: flex;
+}
+
+.parental-options-actions .btn {
+  min-width: 288px;
+}
+
+.parental-options-actions .btn + .btn {
+  margin-left: 16px;
+}
+
+.parental-pin-actions button {
+  min-width: 150px;
+  padding: 14px 24px;
+  color: var(--text-primary);
+  font-size: 20px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.parental-columns {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Flat columns: a divider, not a card, separates each level. */
+.parental-column {
+  display: flex;
+  flex: 1.2 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 12px 0 20px;
+  border-left: 1px solid var(--border);
+}
+
+.parental-column:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.parental-column-group {
+  flex: 1 1 0;
+}
+
+.parental-column.parental-column-source {
+  flex: 0 0 380px;
+}
+
+.parental-column-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  min-height: 44px;
+  margin: 0 0 8px 14px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.parental-column-head h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 22px;
+  text-overflow: ellipsis;
+}
+
+.parental-column-note {
+  margin-left: 12px;
+  color: var(--text-muted);
+  font-size: 18px;
+}
+
+/* Room for the focus ring, which the scroll container would clip. */
+.parental-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 -8px;
+  padding: 4px 8px;
+  overflow-y: auto;
+}
+
+.parental-row {
+  display: flex;
+  width: 100%;
+  min-height: 58px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-size: 22px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+}
+
+.parental-row.active {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-dim);
+}
+
+.parental-row > span:not(.lock-badge) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parental-row strong {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.parental-row strong.is-locked {
+  color: var(--warning);
+}
+
+.parental-row small {
+  color: var(--text-muted);
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.parental-row em.parental-exception {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.parental-row em.parental-suggested {
+  padding: 2px 10px;
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  color: var(--warning);
+  font-size: 15px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.parental-row.parental-suggest-row {
+  color: var(--warning);
+  font-weight: 600;
+  border-color: var(--warning);
+}
+
+.parental-suggest-row svg {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.parental-suggest-row svg rect {
+  fill: currentColor;
+}
+
+/* An unlock session is a state the parent must notice and can end early. */
+.tab-bar-item.tab-bar-lock {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 18px;
+  border: 2px solid var(--warning);
+  border-radius: 999px;
+  color: var(--warning);
+  font-size: 22px;
+}
+
+.tab-bar-lock svg {
+  width: 26px;
+  height: 26px;
+  margin-right: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.tab-bar-item.tab-bar-lock.focused {
+  background: var(--warning);
+  color: var(--bg-primary);
+}
+
+.parental-row .lock-badge {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin-right: 0;
+}
+
+.parental-pin-lock svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.parental-row.focused,
+.parental-pin-actions button:focus {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: -3px;
+  background: var(--bg-tertiary);
+}
+
+.parental-empty {
+  padding: 28px 18px;
+  color: var(--text-muted);
+  font-size: 19px;
+  line-height: 1.4;
+}
+
+/* The shared channel-edit legend overlays the channel list; here it docks
+   below the columns in normal flow. */
+.edit-hints.parental-hints {
+  position: static;
+  flex: 0 0 auto;
+  margin: 18px -54px -32px;
+  padding: 12px 54px;
+}
+
+.parental-pin-prompt {
+  z-index: 1200;
+}
+
+.parental-pin-dialog {
+  width: 620px;
+}
+
+.parental-pin-lock {
+  display: flex;
+  width: 64px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 18px;
+  color: var(--accent);
+  background: var(--bg-tertiary);
+  border-radius: 50%;
+}
+
+.parental-pin-lock svg {
+  width: 34px;
+  height: 34px;
+}
+
+.parental-pin-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 34px;
+}
+
+.parental-pin-dialog p {
+  margin: 0 0 24px;
+  color: var(--text-secondary);
+  font-size: 20px;
+}
+
+.parental-pin-dialog .parental-pin-warning {
+  margin-top: -12px;
+  font-size: 18px;
+}
+
+.parental-pin-field {
+  position: relative;
+  width: 276px;
+  height: 68px;
+  margin: 0 auto;
+}
+
+.parental-pin-input {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 14px 20px;
+  color: transparent;
+  font-size: 34px;
+  background: transparent;
+  border: 0;
+  opacity: 0;
+}
+
+.parental-pin-input:focus {
+  outline: 0;
+}
+
+.parental-pin-slots {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.parental-pin-slots span {
+  display: flex;
+  width: 60px;
+  height: 68px;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  border: 2px solid var(--text-muted);
+  border-radius: var(--radius);
+}
+
+.parental-pin-slots span::after {
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  border-radius: 50%;
+  content: "";
+}
+
+.parental-pin-slots span.filled {
+  border-color: var(--accent);
+}
+
+.parental-pin-slots span.filled::after {
+  background: var(--text-primary);
+}
+
+.parental-pin-slots span.active {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.parental-pin-input:disabled + .parental-pin-slots {
+  opacity: 0.38;
+}
+
+.parental-pin-error {
+  min-height: 28px;
+  margin: 14px 0;
+  color: var(--danger);
+  font-size: 18px;
+}
+
+.parental-pin-actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+/* Lock badges on list rows and posters for content behind the PIN. */
+.lock-badge {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.35em;
+  vertical-align: -0.08em;
+  color: var(--warning);
+}
+
+.lock-badge.is-unlocked {
+  color: var(--text-muted);
+}
+
+.lock-badge svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.lock-badge.is-locked rect {
+  fill: currentColor;
+}
+
+.catalog-poster-wrap {
+  position: relative;
+}
+
+.catalog-poster-wrap .lock-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 8px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* The AccountSwitcher draws the avatar's own ring; the slot is only the
+   SpatialNav target. */
+.parental-account-slot {
+  position: relative;
+  border-radius: 50%;
+}
+
+.parental-account-slot.focused {
+  box-shadow: none;
+}

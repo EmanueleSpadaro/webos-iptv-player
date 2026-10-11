@@ -382,6 +382,18 @@ test('committed numeric channel entry opens full screen directly', async ({ page
   );
 });
 
+test('numeric channel entry during a preview opens full screen', async ({ page }) => {
+  await setup(page, { enabled: true });
+  await selectFirst(page);
+  await page.keyboard.press('2');
+  await expect(page.locator('#view-player')).toBeVisible();
+  await expect(page.locator(PANEL)).toBeHidden();
+  await expect(page.locator('#video-player source')).toHaveAttribute(
+    'src',
+    'http://host/ch2.m3u8',
+  );
+});
+
 test('D-pad enters controls and returns to the selected row without stopping', async ({ page }) => {
   await setup(page, { enabled: true });
   await selectFirst(page);

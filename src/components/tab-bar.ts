@@ -1,8 +1,8 @@
 import type { Action, PlaylistEntry } from '../types';
-import { html } from '../utils/dom';
+import { html, raw } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { CONFIG } from '../config';
-import { SEARCH_ICON } from './icons';
+import { SEARCH_ICON, UNLOCK_ICON } from './icons';
 import { AccountSwitcher } from './account-switcher';
 import { t } from '../i18n';
 
@@ -47,6 +47,8 @@ interface TabBarHandlers {
   onSearchClose: () => void;
   // A different Xtream account was chosen in the avatar dropdown.
   onSelectAccount: (accountId: string) => void;
+  // End a parental unlock session before it times out.
+  onLockNow: () => void;
 }
 
 // Persistent, docked top section bar (hidden on the full-screen player / EPG).
@@ -67,6 +69,7 @@ export class TabBar {
   private switcher: AccountSwitcher | null = null;
   private accounts: PlaylistEntry[] = [];
   private selectedAccountId = '';
+  private lockShown = false;
 
   constructor(handlers: TabBarHandlers) {
     this.handlers = handlers;
@@ -81,9 +84,25 @@ export class TabBar {
   refresh(): void { this.render(); }
 
   private get accountShown(): boolean { return this.accounts.length > 0; }
-  // Focus targets = the sections, plus the account avatar when present.
-  private ringLength(): number { return this.sections.length + (this.accountShown ? 1 : 0); }
-  private onAccount(): boolean { return this.accountShown && this.focusIndex === this.sections.length; }
+  // Focus targets = the sections, then "Lock now" and the account avatar when present.
+  private ringLength(): number {
+    return this.sections.length + (this.lockShown ? 1 : 0) + (this.accountShown ? 1 : 0);
+  }
+  private onLock(): boolean { return this.lockShown && this.focusIndex === this.sections.length; }
+  private onAccount(): boolean {
+    return this.accountShown
+      && this.focusIndex === this.sections.length + (this.lockShown ? 1 : 0);
+  }
+
+  // Shown while a parental PIN entry keeps locked content open.
+  setParentalSession(active: boolean): void {
+    if (this.lockShown === active) return;
+    this.lockShown = active;
+    if (this.focusIndex >= this.sections.length) {
+      this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === this.active));
+    }
+    if (this._shown) this.render();
+  }
 
   setSections(hasXtream: boolean): void {
     this.hasXtream = hasXtream;
@@ -97,7 +116,7 @@ export class TabBar {
     this.accounts = accounts;
     this.selectedAccountId = selectedId;
     // If the avatar just disappeared while focused on it, park focus on the active tab.
-    if (!this.accountShown && this.focusIndex >= this.sections.length) {
+    if (!this.accountShown && this.focusIndex >= this.sections.length + (this.lockShown ? 1 : 0)) {
       this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === this.active));
     }
     this.switcher?.setAccounts(accounts, selectedId);
@@ -159,6 +178,11 @@ export class TabBar {
     document.addEventListener('click', (e: MouseEvent) => {
       if (!this._shown) return;
       const hit = document.elementFromPoint(e.clientX, e.clientY);
+      if (hit?.closest('[data-lock-now]')) {
+        this.dropFocus();
+        this.handlers.onLockNow();
+        return;
+      }
       const item = hit?.closest<HTMLElement>('.tab-bar-item');
       if (!item || !item.dataset.section) return;
       const section = item.dataset.section as Section;
@@ -196,7 +220,14 @@ export class TabBar {
         break;
       case 'select':
       case 'down':
-        if (this.onAccount()) {
+        if (this.onLock()) {
+          if (action === 'select') {
+            this.handlers.onLockNow();
+          } else {
+            this.dropFocus();
+            this.handlers.onEnter(this.active);
+          }
+        } else if (this.onAccount()) {
           this.switcher?.openMenu();
           this.render();
         } else if (this.sections[this.focusIndex].id === 'search') {
@@ -217,9 +248,10 @@ export class TabBar {
     }
   }
 
-  // Moving onto a section switches it live; moving onto the avatar only re-renders.
+  // Moving onto a section switches it live; moving onto the avatar or the
+  // lock only re-renders.
   private afterMove(): void {
-    if (this.onAccount()) this.render();
+    if (this.onAccount() || this.onLock()) this.render();
     else this.commitSwitch();
   }
 
@@ -300,6 +332,10 @@ export class TabBar {
         `;
         })}
         <div class="tab-bar-search ${this.searchExpanded ? 'expanded' : ''}" data-key="search-slot" data-morph-preserve></div>
+        ${this.lockShown ? html`
+          <button class="tab-bar-item tab-bar-lock ${this._focused && this.onLock() ? 'focused' : ''}"
+                  data-key="lock-now" data-lock-now>${raw(UNLOCK_ICON)}<span>${t('parental.lockNow')}</span></button>
+        ` : ''}
         <div class="tab-bar-account" data-key="account-slot" data-morph-preserve></div>
       </div>
     `);

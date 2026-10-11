@@ -126,6 +126,20 @@ describe('StorageService', () => {
     expect(StorageService.getAnimationMode()).toBe('reduced');
   });
 
+  it('reports each source change with the list it replaced', () => {
+    StorageService.setPlaylists([{ id: 'p1', name: 'P1', url: 'http://host/a' }]);
+    const handler = vi.fn();
+    StorageService.setPlaylistsReplacedHandler(handler);
+    StorageService.setPlaylists([{ id: 'p1', name: 'P1', url: 'http://host/a' }]);
+    expect(handler).not.toHaveBeenCalled();
+    StorageService.setPlaylists([{ id: 'p1', name: 'P1', url: 'http://host/b' }]);
+    expect(handler).toHaveBeenCalledWith(
+      [{ id: 'p1', name: 'P1', url: 'http://host/a' }],
+      [{ id: 'p1', name: 'P1', url: 'http://host/b' }],
+    );
+    StorageService.setPlaylistsReplacedHandler(() => {});
+  });
+
   it('persists live preview on and off independently from autoplay and sources', () => {
     StorageService.setAutoPlay(true);
     StorageService.setPlaylists([{ id: 'p1', name: 'P1', url: 'http://host/a' }]);

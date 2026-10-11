@@ -87,6 +87,7 @@ import {
   legacyChannelKey,
 } from '../utils/channel';
 import { ChannelCustomizationService } from './channel-customization';
+import { ParentalControlService } from './parental-control';
 import { CONFIG } from '../config';
 
 function channel(over: Partial<Channel>): Channel {
@@ -1294,6 +1295,28 @@ describe('PlaylistService customization', () => {
       storageMock.getShowHiddenChannels.mockReturnValue(false);
       PlaylistService.applyCustomization();
     }
+  });
+
+  it('drops concealed channels from every list but keeps them in the EPG set', async () => {
+    useRecord(record({}));
+    await PlaylistService.refresh();
+    const concealing = vi.spyOn(ParentalControlService, 'concealing', 'get')
+      .mockReturnValue(true);
+    const concealed = vi.spyOn(ParentalControlService, 'isConcealed')
+      .mockImplementation(request => request.target.kind === 'live-channel'
+        && request.target.channelKey === KEY_B);
+    try {
+      PlaylistService.applyCustomization();
+      expect(PlaylistService.channels.map(c => c.name)).toEqual(['Alpha']);
+      expect(PlaylistService.indexOfKey(KEY_B)).toBe(-1);
+      expect(PlaylistService.getEpgEligibleChannels().map(c => c.name))
+        .toEqual(['Alpha', 'Bravo']);
+    } finally {
+      concealing.mockRestore();
+      concealed.mockRestore();
+      PlaylistService.applyCustomization();
+    }
+    expect(PlaylistService.channels.map(c => c.name)).toEqual(['Alpha', 'Bravo']);
   });
 
   it('applies renames and group assignments and orders the groups', async () => {

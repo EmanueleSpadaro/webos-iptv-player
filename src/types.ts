@@ -184,6 +184,8 @@ export interface PlaylistEntry {
   };
   /** Channel count, populated for 'upload' entries by reconcile() from UploadMeta. */
   count?: number;
+  /** When an 'upload' entry's file was last written; a re-upload changes it. */
+  revision?: number;
 }
 
 /** A per-channel display customization, keyed by `channelKey(ch)`. */
@@ -219,6 +221,88 @@ export interface ChannelCustomization {
   /** User-created groups, so an empty one still lists and keeps its position. */
   customGroups: string[];
 }
+
+export type ParentalRuleValue = 'allow' | 'protect';
+export type ParentalConcealMode = 'show-locked' | 'hide-locked';
+export type ParentalUnlockDuration =
+  | 'once'
+  | '5-minutes'
+  | '15-minutes'
+  | 'until-backgrounded';
+
+export interface ParentalPinThrottle {
+  failures: number;
+  lockouts: number;
+  blockedUntil: number;
+}
+
+export interface ParentalPinRecord {
+  algorithm: 'sha256';
+  salt: string;
+  digest: string;
+}
+
+export interface ParentalControlConfig {
+  version: number;
+  enabled: boolean;
+  pin: ParentalPinRecord | null;
+  concealMode: ParentalConcealMode;
+  unlockDuration: ParentalUnlockDuration;
+  /** Serialized live-group or Xtream-category targets. */
+  groupRules: Record<string, 'protect'>;
+  /** Serialized live-channel or Xtream-item targets. */
+  itemRules: Record<string, ParentalRuleValue>;
+  /** `kind|sourceId` keys the parent has reviewed; any other source is locked. */
+  approvedSources: string[];
+}
+
+export interface LiveGroupTarget {
+  kind: 'live-group';
+  playlistId: string;
+  groupKey: string;
+}
+
+export interface LiveChannelTarget {
+  kind: 'live-channel';
+  channelKey: string;
+}
+
+export interface CatalogCategoryTarget {
+  kind: 'vod-category' | 'series-category';
+  accountId: string;
+  categoryId: string;
+}
+
+export interface CatalogItemTarget {
+  kind: 'vod-item' | 'series-item';
+  accountId: string;
+  itemId: string;
+}
+
+export type ParentalParentTarget = LiveGroupTarget | CatalogCategoryTarget;
+export type ParentalItemTarget = LiveChannelTarget | CatalogItemTarget;
+export type ParentalAccessIntent =
+  | 'browse'
+  | 'preview'
+  | 'play'
+  | 'resume'
+  | 'reminder'
+  | 'manage';
+
+export interface ParentalAccessRequest {
+  target: ParentalItemTarget;
+  parents: ParentalParentTarget[];
+  intent: ParentalAccessIntent;
+  label: string;
+}
+
+export type ParentalAccessDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      concealed: boolean;
+      reason: 'item' | 'parent';
+    };
 
 export interface CatchupInfo {
   start: number;
@@ -503,6 +587,8 @@ export interface ResumeEntry {
   updatedAt: number;  // epoch ms, for recency ordering
   episodeQueue?: VodQueueItem[];
   watchlistOwner?: WatchlistOwner;
+  /** Catalog category at save time, so parental rules apply from the Continue rail. */
+  categoryId?: string;
 }
 
 // Structured metadata for online subtitle search (passed from Xtream catalog to player).
@@ -543,6 +629,9 @@ export interface VodQueueItem {
   accountId: string;
   itemId: string;
   kind: ResumeKind;
+  /** Category and owning catalog item used by parental-control rules. */
+  categoryId?: string;
+  parentalItemId?: string;
   subtitles: SidecarSubtitle[];
   searchMeta?: SearchMeta;
   watchlistOwner?: WatchlistOwner;

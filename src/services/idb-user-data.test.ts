@@ -37,6 +37,7 @@ describe('IndexedDB user-data write barrier', () => {
     expect(records.favorites).toHaveLength(1);
     expect(records.watchlist).toHaveLength(1);
     expect(records.reminders).toEqual([]);
+    expect(records['parental-control']).toEqual([]);
   });
 
   it('rejects once when a queued write failed', async () => {

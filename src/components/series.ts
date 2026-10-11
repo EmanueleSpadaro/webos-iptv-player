@@ -25,6 +25,7 @@ const EPISODE_VIEWPORT_FALLBACK = 984;
 export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   protected get kicker(): string { return t('common.series'); }
   protected readonly resumeKind: ResumeKind = 'episode';
+  protected readonly parentalKind = 'series' as const;
   protected get emptyMessage(): string { return t('catalog.noSeries'); }
   protected get gridEmptyMessage(): string { return t('catalog.noSeriesCategory'); }
 
@@ -80,20 +81,20 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   }
 
   protected watchlistRail(): Safe | '' {
-    const entries = StorageService.getWatchlist(this.account!.id, 'series');
+    const entries = this.visibleWatchlist('series');
     return entries.length
       ? this.rail(t('common.watchlist'), entries.map((entry) => this.tile(this.watchlistEntryToSeries(entry))))
       : '';
   }
 
   protected fallbackItem(seriesId: string): SeriesItem | null {
-    const entry = StorageService.getWatchlist(this.account!.id, 'series')
+    const entry = this.visibleWatchlist('series')
       .find((item) => item.itemId === seriesId);
     return entry ? this.watchlistEntryToSeries(entry) : null;
   }
 
   protected heroFallback(): SeriesItem | null {
-    const entry = StorageService.getWatchlist(this.account!.id, 'series')[0];
+    const entry = this.visibleWatchlist('series')[0];
     return entry ? this.watchlistEntryToSeries(entry) : null;
   }
 
@@ -194,6 +195,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       accountId: a.id,
       itemId: ep.id,
       kind: 'episode',
+      categoryId: series.categoryId,
+      parentalItemId: series.seriesId,
       subtitles: ep.subtitles,
       searchMeta: { season: ep.season, episode: ep.episode },
       watchlistOwner: { kind: 'series', itemId: series.seriesId },
@@ -241,6 +244,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       accountId: a.id,
       itemId: r.itemId,
       kind: 'episode',
+      categoryId: r.categoryId,
+      parentalItemId: r.watchlistOwner?.itemId,
       resumeSecs: r.position,
       subtitles: [],
       episodeQueue: r.episodeQueue,
@@ -251,7 +256,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   private resumeTile(r: ResumeEntry): Safe {
     return html`
       <div class="catalog-tile" data-focusable data-key="r:${r.itemId}" data-resume-episode="${r.itemId}">
-        <div class="catalog-poster-wrap">${this.posterCell(r.name, r.poster)}</div>
+        <div class="catalog-poster-wrap">${this.posterCell(r.name, r.poster)}${
+          this.itemLockBadge(r.categoryId ?? '', r.watchlistOwner?.itemId ?? r.itemId)}</div>
         <div class="catalog-tile-name">${r.name}</div>
       </div>
     `;

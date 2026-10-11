@@ -58,7 +58,7 @@ describe('idb-cache', () => {
 
   it('uses the next schema version after the published v3 database', async () => {
     const db = await openPersistenceDb();
-    expect(db?.version).toBe(5);
+    expect(db?.version).toBe(6);
     expect(db?.objectStoreNames.contains(STREAM_MIME_STORE)).toBe(true);
   });
 

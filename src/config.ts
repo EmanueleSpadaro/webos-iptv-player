@@ -8,6 +8,12 @@ export const CONFIG = {
   // Versioned channel customization record (order, display, grouping, and EPG overrides).
   // Bump when its shape changes so an older payload is ignored, not misapplied.
   CHANNEL_CUSTOMIZATION_VERSION: 1,
+  PARENTAL_CONTROL_VERSION: 1,
+  PARENTAL_PIN_LENGTH: 4,
+  PARENTAL_ITEMS_DELAY_MS: 250,
+  PARENTAL_PIN_MAX_FAILURES: 5,
+  PARENTAL_PIN_RETRY_DELAY_MS: 30 * 1000,
+  PARENTAL_PIN_MAX_RETRY_DELAY_MS: 15 * 60 * 1000,
 
   // Bundled webOS JS service (see bundled-service/src/lan) for phone setup and uploads.
   SERVICE_ID: __SERVICE_ID__,

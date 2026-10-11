@@ -19,6 +19,7 @@ import { formatPosition } from '../utils/time';
 import { getLocale, t, type SupportedLocale } from '../i18n';
 import { groupIcon } from './group-icon';
 import { CHEVRON_LEFT_ICON } from './icons';
+import { channelLockBadge, liveGroupLockBadge } from './parental-badge';
 import { showToast } from './toast';
 import { VirtualList } from '../utils/virtual-list';
 import { VirtualScrollGuard } from '../utils/virtual-scroll';
@@ -821,7 +822,8 @@ export class Sidebar {
                  data-key="group:${item.id}" data-group-id="${item.id}" data-group-pos="${i}"
                  style="top:${this.groupVirtualizer.getItemOffset(i)}px">
               <span class="sidebar-group-icon">${raw(groupIcon(item.label, item.builtin))}</span>
-              <span class="sidebar-group-name">${item.label}</span>
+              <span class="sidebar-group-name">${
+                raw(liveGroupLockBadge(item.id, this.playlist))}${item.label}</span>
               <span class="sidebar-group-count">${item.count}</span>
             </div>
           `;
@@ -887,7 +889,7 @@ export class Sidebar {
                 <span class="ch-num">${globalIdx + 1}</span>
                 ${this.renderLogo(ch)}
                 <div class="ch-info">
-                  <span class="ch-name"><span class="ch-name-text">${title}</span></span>
+                  <span class="ch-name">${raw(channelLockBadge(ch))}<span class="ch-name-text">${title}</span></span>
                   ${subtitle ? html`<span class="ch-now"><span class="ch-now-text">${subtitle}</span></span>` : ''}
                 </div>
                 ${catchup

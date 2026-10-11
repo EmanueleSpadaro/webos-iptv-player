@@ -19,7 +19,9 @@ import { StorageService } from '../services/storage-service';
 import { RecentlyWatchedService, type RecentlyWatchedItem } from '../services/recently-watched';
 import { ChannelHealthService } from '../services/channel-health';
 import { groupIcon } from './group-icon';
-import { BACK_ICON, NAV_HORIZONTAL_ICON, favoriteIcon } from './icons';
+import { NAV_HORIZONTAL_ICON, favoriteIcon } from './icons';
+import { backKey, okHint } from './key-hints';
+import { channelLockBadge, liveGroupLockBadge } from './parental-badge';
 import { showToast } from './toast';
 import { getLocale, t, tp, type SupportedLocale } from '../i18n';
 import { ChannelListEditor } from './channel-list-editor';
@@ -51,6 +53,7 @@ export interface ChannelListOptions {
   onListFocus?: () => void;
   getPreviewHintState?: () => PreviewHintState;
   onEnterManagement?: () => void;
+  authorizeEdit?: (proceed: () => void) => void;
 }
 
 export class ChannelList {
@@ -95,6 +98,7 @@ export class ChannelList {
   private groupEntriesRevision = -1;
   private groupEntriesLocale: SupportedLocale | null = null;
 
+  private authorizeEdit: (proceed: () => void) => void;
   constructor(
     container: HTMLElement,
     options: ChannelListOptions,
@@ -108,7 +112,9 @@ export class ChannelList {
       onListFocus = () => {},
       getPreviewHintState = () => 'off',
       onEnterManagement = () => {},
+      authorizeEdit = proceed => proceed(),
     } = options;
+    this.authorizeEdit = authorizeEdit;
     this.container = container;
     this.onChannelSelect = onChannelSelect;
     this.onChannelsChanged = onChannelsChanged;
@@ -130,6 +136,7 @@ export class ChannelList {
       onEpgOffsetChanged,
       getCurrentGroup: () => this.currentGroup,
       getCurrentPlaylist: () => this.currentPlaylist,
+      requestEditMode: group => this.enterEditMode(group),
       setLocation: (group, playlist) => {
         this.currentGroup = group;
         this.currentPlaylist = playlist;
@@ -450,10 +457,7 @@ export class ChannelList {
     return html`
       <div class="edit-hints preview-list-hints">
         <div class="preview-list-context">
-          <span class="edit-hint" data-preview-list-open>
-            <span class="edit-key key-ok">OK</span><span>${
-            t('preview.open')
-          }</span></span>
+          ${okHint(t('preview.open'), { 'data-preview-list-open': '' })}
           ${state === 'active' ? html`
             <span class="edit-hint" data-preview-list-controls>
               ${raw(NAV_HORIZONTAL_ICON)}
@@ -462,7 +466,7 @@ export class ChannelList {
         </div>
         ${state === 'active' ? html`
           <span class="edit-hint preview-list-close" data-preview-list-close>
-            <span class="edit-key key-back">${raw(BACK_ICON)}</span>
+            ${backKey()}
             <span>${t('common.close')}</span>
           </span>` : ''}
       </div>
@@ -470,7 +474,7 @@ export class ChannelList {
   }
 
   enterEditMode(group: ChannelGroupId = this.currentGroup): void {
-    this.editor.enterEditMode(group);
+    this.authorizeEdit(() => this.editor.enterEditMode(group));
   }
 
   exitEditMode(): void {
@@ -674,7 +678,8 @@ export class ChannelList {
         <span class="group-icon">${raw(groupIcon(g.label, g.builtin))}</span>
         ${renaming
           ? html`<input class="edit-text-input" type="text" value="${g.label}">`
-          : html`<span class="group-name">${g.label}</span>`}
+          : html`<span class="group-name">${
+              raw(liveGroupLockBadge(g.id, this.currentPlaylist))}${g.label}</span>`}
         <span class="group-count">${count}</span>
       </div>
     `;
@@ -749,7 +754,7 @@ export class ChannelList {
         <div class="channel-info">
           ${renaming
             ? html`<input class="edit-text-input" type="text" value="${ch.name}">`
-            : html`<div class="channel-name">${
+            : html`<div class="channel-name">${raw(channelLockBadge(ch))}${
                 showFavoriteStar ? raw(favoriteIcon(true)) : ''
               }${ch.name}</div>`}
           ${this.editor.isChannelEditing && ch.sourceName
@@ -783,7 +788,7 @@ export class ChannelList {
           <div class="channel-number">${item.channelIndex + 1}</div>
           ${this.renderLogo(item.channel)}
           <div class="channel-info">
-            <div class="channel-name">${
+            <div class="channel-name">${raw(channelLockBadge(item.channel))}${
               isFav ? raw(favoriteIcon(true)) : ''
             }${item.channel.name}</div>
             ${nowPlaying ? html`<div class="channel-now">${nowPlaying.title}</div>` : ''}
@@ -809,7 +814,7 @@ export class ChannelList {
         <div class="channel-number">${item.channelIndex + 1}</div>
         ${this.renderLogo(item.channel)}
         <div class="channel-info">
-          <div class="channel-name">${
+          <div class="channel-name">${raw(channelLockBadge(item.channel))}${
             isFav ? raw(favoriteIcon(true)) : ''
           }${item.progress.title ?? ''}</div>
           <div class="channel-now">${t('channel.resumeAt', {

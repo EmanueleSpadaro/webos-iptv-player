@@ -64,6 +64,7 @@ import { showToast } from './toast';
 import { probeMedia } from '../services/media-probe';
 import { CONFIG } from '../config';
 import { channelKey, legacyChannelKey } from '../utils/channel';
+import { ParentalControlService } from '../services/parental-control';
 
 const CHANNEL = {
   id: 'c1', name: 'Chan', logo: '', group: '', url: 'http://host/play/c1', extras: null,
@@ -252,6 +253,67 @@ afterEach(() => {
 
 const bar = () => container.querySelector('.osd-progress-bar') as HTMLElement;
 const elapsed = () => container.querySelector('.osd-time-current')!.textContent;
+
+describe('Player authorization gates', () => {
+  it('defers live playback until the authorizer runs the action', () => {
+    let deferred: (() => void) | null = null;
+    const authorize = vi.fn((_channel, action: () => void) => {
+      deferred = action;
+      return false;
+    });
+    player = new Player(
+      container,
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      authorize,
+    );
+    player.init(video);
+
+    player.play(0);
+
+    expect(authorize).toHaveBeenCalledWith(CHANNEL, expect.any(Function), false);
+    expect(player.getCurrentChannel()).toBeNull();
+    expect(deferred).not.toBeNull();
+    (deferred as unknown as () => void)();
+    expect(player.getCurrentChannel()).toBe(CHANNEL);
+  });
+
+  it('asks again before resuming a live channel after the app was hidden', () => {
+    let allowed = true;
+    let deferred: (() => void) | null = null;
+    const onBack = vi.fn();
+    const authorize = vi.fn((_channel, action: () => void) => {
+      if (allowed) { action(); return true; }
+      deferred = action;
+      return false;
+    });
+    player = new Player(
+      container, onBack, undefined, undefined, undefined, undefined, undefined, authorize,
+    );
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    HTMLMediaElement.prototype.pause = vi.fn();
+    HTMLMediaElement.prototype.load = vi.fn();
+    const el = document.createElement('video');
+    Object.defineProperty(el, 'paused', { get: () => false, configurable: true });
+    container.appendChild(el);
+    player.init(el);
+    player.play(0);
+    player.suspend();
+    allowed = false;
+
+    player.resume();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(authorize).toHaveBeenCalledTimes(2);
+    expect(container.classList.contains('hidden')).toBe(true);
+    (deferred as unknown as () => void)();
+    expect(container.classList.contains('hidden')).toBe(false);
+  });
+});
 
 describe('Player pointer OSD reveal', () => {
   it('does not reveal a hidden OSD while a player overlay is open', () => {
@@ -1043,6 +1105,77 @@ describe('Player VOD mode', () => {
   });
   afterEach(() => { container.remove(); });
 
+  it('defers VOD playback until the authorizer runs the action', () => {
+    let deferred: (() => void) | null = null;
+    const authorize = vi.fn((_item, action: () => void) => {
+      deferred = action;
+      return false;
+    });
+    player = new Player(
+      container,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      authorize,
+    );
+    player.init(fakeVideo(3600));
+
+    player.playVod(req());
+
+    expect(player.isVod()).toBe(false);
+    expect(deferred).not.toBeNull();
+    (deferred as unknown as () => void)();
+    expect(player.isVod()).toBe(true);
+  });
+
+  it('asks again before resuming a VOD after the app was hidden', () => {
+    let allowed = true;
+    let deferred: (() => void) | null = null;
+    const authorize = vi.fn((_item, action: () => void) => {
+      if (allowed) { action(); return true; }
+      deferred = action;
+      return false;
+    });
+    player = new Player(
+      container, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, authorize,
+    );
+    const v = fakeVideo(3600);
+    player.init(v);
+    const r = req();
+    player.playVod(r);
+    v.currentTime = 42;
+    player.suspend();
+    allowed = false;
+
+    player.resume();
+
+    expect(r.onBack).toHaveBeenCalledTimes(1);
+    expect(player.isVod()).toBe(false);
+    expect(authorize).toHaveBeenLastCalledWith(
+      expect.objectContaining({ itemId: '10', resumeSecs: 42 }), expect.any(Function));
+    (deferred as unknown as () => void)();
+    expect(player.isVod()).toBe(true);
+  });
+
+  it('keeps an allowed VOD playing when the app returns', () => {
+    const authorize = vi.fn((_item, action: () => void) => { action(); return true; });
+    player = new Player(
+      container, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, authorize,
+    );
+    player.init(fakeVideo(3600));
+    const r = req();
+    player.playVod(r);
+
+    player.resume();
+
+    expect(r.onBack).not.toHaveBeenCalled();
+    expect(player.isVod()).toBe(true);
+  });
+
   it('seeks to the resume position once metadata is known', () => {
     const video = fakeVideo(3600);
     player.init(video);
@@ -1165,6 +1298,74 @@ describe('Player VOD mode', () => {
 
     await vi.advanceTimersByTimeAsync(10_000);
     expect(probeMedia).toHaveBeenCalledWith(next.url, 'x1|media_probe|vod|11');
+  });
+
+  it('leaves the player while a locked next item waits for the PIN', () => {
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    HTMLMediaElement.prototype.pause = vi.fn();
+    HTMLMediaElement.prototype.load = vi.fn();
+    let locked = false;
+    let deferred: (() => void) | null = null;
+    const authorize = vi.fn((_item, action: () => void) => {
+      if (!locked) { action(); return true; }
+      deferred = action;
+      return false;
+    });
+    player = new Player(
+      container, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, authorize,
+    );
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'duration', { value: 1800, configurable: true });
+    container.appendChild(video);
+    player.init(video);
+    const next = {
+      url: 'http://host:8080/movie/u/p/11.mp4', title: 'Movie Two',
+      poster: '', accountId: 'x1', itemId: '11', kind: 'vod' as const, subtitles: [],
+    };
+    const r = req({ watchlistQueue: [next] });
+    player.playVod(r);
+    video.dispatchEvent(new Event('ended'));
+    vi.mocked(r.onBack).mockClear();
+    locked = true;
+
+    player.handleAction('select');
+
+    expect(r.onBack).toHaveBeenCalledTimes(1);
+    expect(player.isVod()).toBe(false);
+    (deferred as unknown as () => void)();
+    expect(player.isVod()).toBe(true);
+  });
+
+  it('continues to the next episode of an unlocked series without the PIN', () => {
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    HTMLMediaElement.prototype.pause = vi.fn();
+    HTMLMediaElement.prototype.load = vi.fn();
+    let locked = false;
+    const authorize = vi.fn((_item, action: () => void) => {
+      if (!locked) { action(); return true; }
+      return false;
+    });
+    player = new Player(
+      container, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, authorize,
+    );
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'duration', { value: 1800, configurable: true });
+    container.appendChild(video);
+    player.init(video);
+    const series = { kind: 'episode' as const, categoryId: 'c1', parentalItemId: 's1' };
+    const next = {
+      url: 'http://host:8080/series/u/p/e2.mp4', title: 'Series One — S1E2',
+      poster: '', accountId: 'x1', itemId: 'e2', subtitles: [], ...series,
+    };
+    player.playVod(req({ itemId: 'e1', episodeQueue: [next], ...series }));
+    video.dispatchEvent(new Event('ended'));
+    locked = true;
+    authorize.mockClear();
+
+    player.handleAction('select');
+
+    expect(authorize).not.toHaveBeenCalled();
+    expect(player.isVod()).toBe(true);
   });
 
   it('counts down and automatically starts the next episode', async () => {
@@ -1839,6 +2040,25 @@ describe('Player channel_up/channel_down view scope', () => {
     expect(player.getCurrentChannel()).toBe(FAV_B); // not OTHER, which sits between them globally
     player.channelUp();
     expect(player.getCurrentChannel()).toBe(FAV_C);
+  });
+
+  it('passes over parental-locked channels in both directions', () => {
+    vi.mocked(StorageService.getChannelCycleMode).mockReturnValue('global');
+    const decision = vi.spyOn(ParentalControlService, 'decision').mockImplementation(request =>
+      request.target.kind === 'live-channel' && request.target.channelKey === channelKey(OTHER as never)
+        ? { allowed: false, concealed: false, reason: 'item' }
+        : { allowed: true });
+    const enabled = vi.spyOn(ParentalControlService, 'enabled', 'get').mockReturnValue(true);
+    try {
+      player.play(0); // FAV_A
+      player.channelUp();
+      expect(player.getCurrentChannel()).toBe(FAV_B);
+      player.channelDown();
+      expect(player.getCurrentChannel()).toBe(FAV_A);
+    } finally {
+      decision.mockRestore();
+      enabled.mockRestore();
+    }
   });
 
   it('wraps at the end of the scope instead of spilling into the full list', () => {

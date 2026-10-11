@@ -10,7 +10,8 @@ import type {
   EpgMappingCandidate,
   EpgMappingSearchEntry,
 } from '../services/epg-service';
-import { BACK_ICON, CHECK_ICON, CLOCK_ICON, GUIDE_ICON, SEARCH_ICON } from './icons';
+import { CHECK_ICON, CLOCK_ICON, GUIDE_ICON, SEARCH_ICON } from './icons';
+import { backKey, doneHint, keyHint, okHint } from './key-hints';
 import { showToast } from './toast';
 import { t } from '../i18n';
 import { CONFIG } from '../config';
@@ -34,6 +35,8 @@ interface ChannelListEditorOptions {
   getCurrentGroup: () => ChannelGroupId;
   getCurrentPlaylist: () => string;
   setLocation: (group: ChannelGroupId, playlist: string) => void;
+  // Edit mode behind the parental guard; never call enterEditMode directly.
+  requestEditMode: (group: ChannelGroupId) => void;
 }
 
 const DRAG_START_DISTANCE = 8;
@@ -646,7 +649,7 @@ export class ChannelListEditor {
     const focused = this.nav.focused;
     if (!focused) return;
     if (focused.dataset.editChannels !== undefined) {
-      this.enterEditMode(this.options.getCurrentGroup());
+      this.options.requestEditMode(this.options.getCurrentGroup());
     } else if (focused.dataset.playlist !== undefined) {
       this.options.setLocation('builtin:all', focused.dataset.playlist);
       this.favoriteSelection = null;
@@ -746,7 +749,7 @@ export class ChannelListEditor {
       const target = list[pos + delta];
       if (pos < 0 || !target) return;
       ChannelCustomizationService.moveChannel(
-        PlaylistService.channels.map(channelKey),
+        PlaylistService.getUnconcealedChannels().map(channelKey),
         grabbed.key,
         channelKey(target),
         delta > 0,
@@ -819,7 +822,7 @@ export class ChannelListEditor {
 
     if (grabbed.kind === 'channel' && target.kind === 'channel') {
       ChannelCustomizationService.moveChannel(
-        PlaylistService.channels.map(channelKey),
+        PlaylistService.getUnconcealedChannels().map(channelKey),
         grabbed.key,
         target.key,
         after,
@@ -1047,7 +1050,7 @@ export class ChannelListEditor {
   private renderOverlayBackHint(): Safe {
     return html`
       <div class="channel-edit-overlay-back">
-        <span class="edit-key key-back">${raw(BACK_ICON)}</span>
+        ${backKey()}
         ${t('common.back')}
       </div>
     `;
@@ -1253,7 +1256,7 @@ export class ChannelListEditor {
 
   private editGroupKeys(): string[] {
     const keys = new Set<string>();
-    for (const channel of PlaylistService.channels) {
+    for (const channel of PlaylistService.getUnconcealedChannels()) {
       const key = groupKeyOf(channel);
       if (key) keys.add(key);
     }
@@ -1265,17 +1268,10 @@ export class ChannelListEditor {
     const grabbed = !!this.grabbed;
     return html`
       <div class="edit-hints">
-        <span class="edit-hint"><span class="edit-key key-ok">OK</span><span>${
-          grabbed ? t('channel.editDrop') : t('channel.editGrab')}</span></span>
-        <button class="edit-hint edit-action" data-key="edit:green" data-focusable
-                data-edit-action="green"><span class="edit-key key-green"></span><span>${
-                  t('channel.editHide')}</span></button>
-        <button class="edit-hint edit-action" data-key="edit:blue" data-focusable
-                data-edit-action="blue"><span class="edit-key key-blue"></span><span>${
-                  t('channel.editRename')}</span></button>
-        <button class="edit-hint edit-action" data-key="edit:red" data-focusable
-                data-edit-action="red"><span class="edit-key key-red"></span><span>${
-                  t('channel.editGroup')}</span></button>
+        ${okHint(grabbed ? t('channel.editDrop') : t('channel.editGrab'))}
+        ${keyHint('green', t('channel.editHide'), 'edit:green', { 'data-edit-action': 'green' })}
+        ${keyHint('blue', t('channel.editRename'), 'edit:blue', { 'data-edit-action': 'blue' })}
+        ${keyHint('red', t('channel.editGroup'), 'edit:red', { 'data-edit-action': 'red' })}
         <button class="edit-hint edit-action" data-key="edit:epg" data-focusable
                 data-epg-action>
           <span class="edit-action-icon">${raw(GUIDE_ICON)}</span>
@@ -1286,13 +1282,7 @@ export class ChannelListEditor {
           <span class="edit-action-icon">${raw(CLOCK_ICON)}</span>
           <span>${t('settings.timeCorrection')}</span>
         </button>
-        <button class="edit-hint edit-action" data-key="edit:yellow" data-focusable
-                data-edit-action="yellow">
-          <span class="edit-key key-yellow"></span>
-          <span class="edit-key-separator">/</span>
-          <span class="edit-key key-back">${raw(BACK_ICON)}</span>
-          <span>${t('channel.editDone')}</span>
-        </button>
+        ${doneHint('edit:yellow', { 'data-edit-action': 'yellow' })}
       </div>
     `;
   }
@@ -1308,21 +1298,11 @@ export class ChannelListEditor {
       : t('channel.favoriteSelectAll');
     return html`
       <div class="edit-hints favorite-hints">
-        <span class="edit-hint"><span class="edit-key key-ok">OK</span><span>${
-          t('channel.favoriteSelect')}</span></span>
-        <button class="edit-hint edit-action" data-key="favorite:blue" data-focusable
-                data-favorite-action="blue"><span class="edit-key key-blue"></span><span>${
-                  selectAllLabel}</span></button>
-        <button class="edit-hint edit-action" data-key="favorite:red" data-focusable
-                data-favorite-action="red"><span class="edit-key key-red"></span><span>${
-                  t('channel.favoriteRemoveSelected', { count: selected })}</span></button>
-        <button class="edit-hint edit-action" data-key="favorite:yellow" data-focusable
-                data-favorite-action="yellow">
-          <span class="edit-key key-yellow"></span>
-          <span class="edit-key-separator">/</span>
-          <span class="edit-key key-back">${raw(BACK_ICON)}</span>
-          <span>${t('channel.editDone')}</span>
-        </button>
+        ${okHint(t('channel.favoriteSelect'))}
+        ${keyHint('blue', selectAllLabel, 'favorite:blue', { 'data-favorite-action': 'blue' })}
+        ${keyHint('red', t('channel.favoriteRemoveSelected', { count: selected }), 'favorite:red',
+          { 'data-favorite-action': 'red' })}
+        ${doneHint('favorite:yellow', { 'data-favorite-action': 'yellow' })}
       </div>
     `;
   }

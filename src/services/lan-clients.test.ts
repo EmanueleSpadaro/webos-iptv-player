@@ -59,6 +59,12 @@ vi.mock('../utils/fetch-helper', () => ({ fetchWithTimeout: fetchWithTimeoutMock
 vi.mock('../services/reminder-service', () => ({
   ReminderService: { backfillSourceIds: vi.fn() },
 }));
+const guardedSourceIds = vi.hoisted(() => new Set<string>());
+vi.mock('../services/parental-control', () => ({
+  ParentalControlService: {
+    guardsSourceRemoval: (id: string) => guardedSourceIds.has(id),
+  },
+}));
 
 import { setServicePort } from './service-http';
 import { SetupClient } from './setup-client';
@@ -169,7 +175,7 @@ describe('UploadClient.reconcile', () => {
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
       { name: 'Manual', url: 'http://m', source: 'url' },
-      { id: expect.any(String), name: 'Phone One', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 5 },
+      { id: expect.any(String), name: 'Phone One', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 5, revision: 1 },
     ]);
   });
 
@@ -190,7 +196,7 @@ describe('UploadClient.reconcile', () => {
   it('skips writing storage when the uploaded list is already in sync', async () => {
     storageMock.playlists = [
       { name: 'Manual', url: 'http://m', source: 'url' },
-      { name: 'P1', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 5 },
+      { name: 'P1', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 5, revision: 1 },
     ];
     fetchWithTimeoutMock.mockResolvedValueOnce(jsonResponse([
       { id: 'p1', name: 'P1', count: 5, createdAt: 1, url: 'http://127.0.0.1:8890/uploads/p1.m3u' },
@@ -200,6 +206,21 @@ describe('UploadClient.reconcile', () => {
 
     expect(storageMock.setPlaylists).not.toHaveBeenCalled();
     expect(storageMock.remove).not.toHaveBeenCalled();
+  });
+
+  it('records a re-upload under the same name as a new revision', async () => {
+    storageMock.playlists = [
+      { id: 'stable', name: 'P1', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 5, revision: 1 },
+    ];
+    fetchWithTimeoutMock.mockResolvedValueOnce(jsonResponse([
+      { id: 'p1', name: 'P1', count: 5, createdAt: 2, url: 'http://127.0.0.1:8890/uploads/p1.m3u' },
+    ]));
+
+    await UploadClient.reconcile();
+
+    expect(storageMock.setPlaylists).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'stable', revision: 2 }),
+    ]);
   });
 
   it('preserves the playlist id when the service port changes', async () => {
@@ -216,7 +237,7 @@ describe('UploadClient.reconcile', () => {
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
       { id: 'stable', name: 'P1', url: 'http://127.0.0.1:8891/uploads/p1.m3u',
-        source: 'upload', count: 5 },
+        source: 'upload', count: 5, revision: 1 },
     ]);
   });
 
@@ -234,7 +255,7 @@ describe('UploadClient.reconcile', () => {
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
       { id: 'stable', name: 'P1', url: 'http://127.0.0.1:8890/uploads/p1.m3u',
-        source: 'upload', count: 6, enabled: false },
+        source: 'upload', count: 6, revision: 2, enabled: false },
     ]);
   });
 
@@ -251,7 +272,7 @@ describe('UploadClient.reconcile', () => {
     await UploadClient.reconcile();
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
-      { id: expect.any(String), name: 'P1', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 9 },
+      { id: expect.any(String), name: 'P1', url: 'http://127.0.0.1:8890/uploads/p1.m3u', source: 'upload', count: 9, revision: 2 },
     ]);
   });
 
@@ -263,7 +284,7 @@ describe('UploadClient.reconcile', () => {
     await UploadClient.reconcile();
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
-      { id: expect.any(String), name: 'No URL', url: 'http://127.0.0.1:8890/uploads/no%20url.m3u', source: 'upload', count: 1 },
+      { id: expect.any(String), name: 'No URL', url: 'http://127.0.0.1:8890/uploads/no%20url.m3u', source: 'upload', count: 1, revision: 1 },
     ]);
   });
 });
@@ -517,6 +538,35 @@ describe('SetupClient.applyPendingActions', () => {
         enabled: false,
       },
     ]);
+  });
+
+  it('leaves a parental-locked source in place when the phone removes or turns it off', async () => {
+    const locked = { id: 'p1', name: 'Alpha', url: 'http://host/a.m3u', source: 'url' };
+    const other = { id: 'p2', name: 'Bravo', url: 'http://host/b.m3u', source: 'url' };
+    storageMock.playlists = [locked, other];
+    guardedSourceIds.add('p1');
+    fetchWithTimeoutMock
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 30, type: 'remove-source', sourceId: 'p1' },
+        { id: 31, type: 'set-source-enabled', sourceId: 'p1', enabled: false },
+        { id: 32, type: 'set-source-enabled', sourceId: 'p2', enabled: false },
+      ]))
+      .mockResolvedValue(jsonResponse({ updated: true }));
+
+    try {
+      await expect(SetupClient.applyPendingActions()).resolves.toBe(true);
+    } finally {
+      guardedSourceIds.clear();
+    }
+
+    expect(storageMock.setPlaylists).toHaveBeenCalledWith([
+      locked,
+      { ...other, enabled: false },
+    ]);
+    const acknowledged = fetchWithTimeoutMock.mock.calls
+      .map(call => String(call[0]))
+      .filter(url => url.indexOf('/setup-actions/') >= 0);
+    expect(acknowledged.length).toBe(3);
   });
 
   it('updates and clears online subtitle credentials without returning secrets', async () => {

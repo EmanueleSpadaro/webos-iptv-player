@@ -27,6 +27,8 @@ interface IconRule {
   keywords: string[];
 }
 
+const ADULT_ICON = 'no_one_under_eighteen';
+
 const GROUP_ICON_RULES: IconRule[] = [
   {
     icon: 'teddy_bear',
@@ -57,7 +59,7 @@ const GROUP_ICON_RULES: IconRule[] = [
     keywords: ['shop', 'teleshop', 'qvc', 'compra', 'tienda', 'einkauf', 'achat', 'تسوق', '购物'],
   },
   {
-    icon: 'no_one_under_eighteen',
+    icon: ADULT_ICON,
     keywords: ['adult', 'adulte', 'xxx', 'porn', 'erotic', 'erotik', 'взросл', 'yetiskin', 'erwachsen', 'brazzers', 'playboy', 'للكبار', 'بالغ', '+18', '18+', '21+', '成人'],
   },
   {
@@ -131,6 +133,14 @@ export function matchGroupIcon(group: string): string | null {
     }
   }
   return null;
+}
+
+// Adult only, ignoring rule priority, so "Kids XXX" still counts.
+export function isAdultGroupName(group: string): boolean {
+  const folded = fold(group);
+  const tokens = tokenize(folded);
+  const rule = RULES.find(r => r.icon === ADULT_ICON);
+  return !!rule && rule.keywords.some(keyword => keywordHits(keyword, folded, tokens));
 }
 
 function iconImg(name: string): string {

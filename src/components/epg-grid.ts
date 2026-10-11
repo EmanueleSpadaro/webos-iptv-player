@@ -22,6 +22,7 @@ import { formatTime, formatDayLabel, displayDayKey, startOfDisplayDay, addDispla
 import { rankByName } from '../utils/channel-search';
 import { CONFIG } from '../config';
 import { bellIcon, CHEVRON_LEFT_ICON, REPLAY_ICON, SEARCH_ICON } from './icons';
+import { channelLockBadge } from './parental-badge';
 import { getLocale, t, tp, type SupportedLocale } from '../i18n';
 import { VirtualList } from '../utils/virtual-list';
 import { VirtualScrollGuard } from '../utils/virtual-scroll';
@@ -560,7 +561,7 @@ export class EpgGrid {
                      data-channel-pos="${itemIndex}"
                      style="top:${this.channelVirtualizer.getItemOffset(itemIndex)}px">
                   <span class="epg-ch-num">${globalIndex + 1}</span>
-                  <span class="epg-ch-name">${ch.name}</span>
+                  <span class="epg-ch-name">${raw(channelLockBadge(ch))}${ch.name}</span>
                 </div>
               `;
             })}

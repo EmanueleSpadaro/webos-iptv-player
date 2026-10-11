@@ -38,6 +38,12 @@ describe('ReminderPrompt', () => {
     expect(onCancel2).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the generic locked message without the names', () => {
+    prompt.show('Alpha', 'Bravo', { onConfirm: vi.fn(), onCancel: vi.fn() }, true);
+    const message = document.querySelector('.reminder-message')!.textContent!;
+    expect(message).toBe('A locked program is now live. Watch now?');
+  });
+
   it('escapes the title (no raw HTML injection)', () => {
     prompt.show('<img src=x>', 'Bravo', { onConfirm: vi.fn(), onCancel: vi.fn() });
     expect(document.querySelector('.reminder-message img')).toBeNull();

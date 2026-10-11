@@ -1,4 +1,4 @@
-import type { Reminder } from '../types';
+import type { Channel, Reminder } from '../types';
 import { CONFIG } from '../config';
 import { StorageService } from './storage-service';
 import { PlaylistService } from './playlist-service';
@@ -8,6 +8,7 @@ import { t } from '../i18n';
 import { createLogger } from '../utils/logger';
 import { isSourceEnabled } from '../utils/playlist';
 import { isLunaAvailable, lunaRequest } from './luna';
+import { ParentalControlService, liveParentalRequest } from './parental-control';
 
 const log = createLogger('Reminder');
 
@@ -27,8 +28,38 @@ function parseReminderChannelKey(raw: unknown): string | null {
   return null;
 }
 
+interface ChannelKeyIndex {
+  exact: Map<string, number>;
+  // -1 marks a legacy key shared by several channels.
+  legacy: Map<string, number>;
+}
+
+// PlaylistService replaces its channel arrays on every change, so an index
+// per array stays valid and saves rehashing every channel per lookup.
+const keyIndexes = new WeakMap<Channel[], ChannelKeyIndex>();
+
+function channelKeyIndex(channels: Channel[]): ChannelKeyIndex {
+  let index = keyIndexes.get(channels);
+  if (index) return index;
+  index = { exact: new Map(), legacy: new Map() };
+  for (let i = 0; i < channels.length; i++) {
+    const key = channelKey(channels[i]);
+    if (!index.exact.has(key)) index.exact.set(key, i);
+    const legacy = legacyChannelKey(channels[i]);
+    index.legacy.set(legacy, index.legacy.has(legacy) ? -1 : i);
+  }
+  keyIndexes.set(channels, index);
+  return index;
+}
+
+function indexOfChannelKey(channels: Channel[], chKey: string): number {
+  const index = channelKeyIndex(channels);
+  return index.exact.get(chKey) ?? index.legacy.get(chKey) ?? -1;
+}
+
 class ReminderServiceImpl {
   private _devMode = false;
+  private scheduledConcealed = new Map<string, boolean>();
 
   setDevMode(v: boolean): void { this._devMode = v; }
 
@@ -100,15 +131,32 @@ class ReminderServiceImpl {
   }
 
   resolveChannelIndex(chKey: string): number {
-    const exact = PlaylistService.channels.findIndex(ch => channelKey(ch) === chKey);
-    if (exact >= 0) return exact;
-    let legacyMatch = -1;
-    for (let i = 0; i < PlaylistService.channels.length; i++) {
-      if (legacyChannelKey(PlaylistService.channels[i]) !== chKey) continue;
-      if (legacyMatch >= 0) return -1;
-      legacyMatch = i;
+    return indexOfChannelKey(PlaylistService.channels, chKey);
+  }
+
+  // Parental concealment hides a channel without removing it, so its
+  // reminders and alarms must survive.
+  private concealedByParental(chKey: string): boolean {
+    const channels = PlaylistService.getUnconcealedChannels();
+    const channel = channels[indexOfChannelKey(channels, chKey)];
+    return !!channel && ParentalControlService.concealedWhenLocked(liveParentalRequest(channel));
+  }
+
+  // Reschedules reminders whose system notification must switch between the
+  // real names and the generic locked text after locks or hide mode change.
+  refreshParentalCopy(now = Date.now()): void {
+    for (const reminder of this.list()) {
+      if (reminder.answered || reminder.startMs <= now || reminder.stopMs <= now) continue;
+      const name = activityName(reminder.channelKey, reminder.startMs);
+      if (!this.channelExists(reminder.channelKey)) continue;
+      if (this.scheduledConcealed.get(name) !== this.concealedByParental(reminder.channelKey)) {
+        this.schedule(reminder);
+      }
     }
-    return legacyMatch;
+  }
+
+  private channelExists(chKey: string): boolean {
+    return indexOfChannelKey(PlaylistService.getUnconcealedChannels(), chKey) >= 0;
   }
 
   private matchesChannel(reminder: Reminder, chKey: string): boolean {
@@ -202,15 +250,30 @@ class ReminderServiceImpl {
     return key ? this.resolveChannelIndex(key) : -1;
   }
 
+  // A hidden locked channel isn't in the visible list; a reminder for it
+  // still needs it to ask for the PIN.
+  concealedChannel(chKey: string): Channel | null {
+    if (this.resolveChannelIndex(chKey) >= 0) return null;
+    const channels = PlaylistService.getUnconcealedChannels();
+    return channels[indexOfChannelKey(channels, chKey)] ?? null;
+  }
+
+  resolveConcealedLaunchChannel(rawLaunchParams: unknown): { key: string; channel: Channel } | null {
+    const key = parseReminderChannelKey(rawLaunchParams);
+    const channel = key ? this.concealedChannel(key) : null;
+    return key && channel ? { key, channel } : null;
+  }
+
+  // Includes reminders for channels hide mode conceals; they prompt without names.
   dueNow(now = Date.now()): Reminder[] {
     return this.list().filter(r =>
-      !r.answered && r.startMs <= now && now < r.stopMs && this.resolveChannelIndex(r.channelKey) >= 0);
+      !r.answered && r.startMs <= now && now < r.stopMs && this.channelExists(r.channelKey));
   }
 
   prune(now = Date.now()): void {
     const list = this.list();
     const kept = list.filter(r => now < r.stopMs
-      && (this.resolveChannelIndex(r.channelKey) >= 0 || this.unavailableBecauseDisabled(r)));
+      && (this.channelExists(r.channelKey) || this.unavailableBecauseDisabled(r)));
     if (kept.length !== list.length) {
       StorageService.setReminders(kept);
       for (const r of list) {
@@ -218,7 +281,7 @@ class ReminderServiceImpl {
       }
     }
     for (const r of kept) {
-      if (this.resolveChannelIndex(r.channelKey) < 0) {
+      if (!this.channelExists(r.channelKey)) {
         this.cancelSchedule(r.channelKey, r.startMs);
       }
     }
@@ -227,7 +290,7 @@ class ReminderServiceImpl {
   reschedulePending(now = Date.now()): void {
     for (const reminder of this.list()) {
       if (!reminder.answered && reminder.startMs > now && reminder.stopMs > now
-          && this.resolveChannelIndex(reminder.channelKey) >= 0) {
+          && this.channelExists(reminder.channelKey)) {
         this.schedule(reminder);
       }
     }
@@ -246,9 +309,11 @@ class ReminderServiceImpl {
       return;
     }
     const name = activityName(reminder.channelKey, reminder.startMs);
+    const concealed = this.concealedByParental(reminder.channelKey);
+    this.scheduledConcealed.set(name, concealed);
     // Cap title/channel so a long name can't overflow the toast/alert.
-    const title = truncate(reminder.title, CONFIG.REMINDER.TITLE_MAX);
-    const channel = truncate(reminder.channelName, CONFIG.REMINDER.CHANNEL_MAX);
+    const title = concealed ? '' : truncate(reminder.title, CONFIG.REMINDER.TITLE_MAX);
+    const channel = concealed ? '' : truncate(reminder.channelName, CONFIG.REMINDER.CHANNEL_MAX);
     // Dev mode: fire an interactive system alert (app open or closed) via the
     // bundled service. Retail: a passive toast (the actionable prompt is in-app).
     const callback = this._devMode
@@ -261,7 +326,9 @@ class ReminderServiceImpl {
             channelKey: reminder.channelKey,
             appId: CONFIG.APP_ID,
             alertTitle: t('reminder.title'),
-            alertMessage: t('reminder.message', { channel, title }),
+            alertMessage: concealed
+              ? t('reminder.lockedMessage')
+              : t('reminder.message', { channel, title }),
             watchLabel: t('reminder.watchNow'),
             cancelLabel: t('common.cancel'),
           },
@@ -270,7 +337,9 @@ class ReminderServiceImpl {
           method: 'luna://com.webos.notification/createToast',
           params: {
             sourceId: CONFIG.APP_ID,
-            message: t('reminder.toast', { channel, title }),
+            message: concealed
+              ? t('reminder.lockedToast')
+              : t('reminder.toast', { channel, title }),
           },
         };
     try {

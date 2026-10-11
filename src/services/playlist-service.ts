@@ -38,6 +38,7 @@ import {
 } from './xtream-client';
 import { getCachedPlaylist, scheduleCachedPlaylist } from './idb-cache';
 import { isSourceEnabled } from '../utils/playlist';
+import { liveParentalRequest, ParentalControlService } from './parental-control';
 
 const log = createLogger('Playlist');
 
@@ -100,6 +101,9 @@ class PlaylistServiceImpl {
   allChannels: Channel[] = [];
   /** Visible channels in effective (customized) order. Everything else reads this. */
   channels: Channel[] = [];
+  // Customized channels before parental concealment; the EPG keeps covering
+  // concealed channels so an unlock does not force a guide refetch.
+  private unconcealedChannels: Channel[] = [];
   groups: string[] = [];
   groupsRevision = 0;
   playlistTabs: PlaylistTab[] = [];
@@ -146,6 +150,7 @@ class PlaylistServiceImpl {
     this.refreshTimestamp = null;
     this.allChannels = [];
     this.channels = [];
+    this.unconcealedChannels = [];
     this.groups = [];
     this.groupsRevision++;
     this.playlistTabs = [];
@@ -585,7 +590,11 @@ class PlaylistServiceImpl {
    */
   applyCustomization(): void {
     const includeHidden = this.includeHidden || StorageService.getShowHiddenChannels();
-    this.channels = ChannelCustomizationService.applyTo(this.allChannels, includeHidden);
+    this.unconcealedChannels = ChannelCustomizationService.applyTo(this.allChannels, includeHidden);
+    this.channels = ParentalControlService.concealing
+      ? this.unconcealedChannels.filter(channel =>
+        !ParentalControlService.isConcealed(liveParentalRequest(channel)))
+      : this.unconcealedChannels;
     this.buildDerivedIndexes();
   }
 
@@ -596,8 +605,16 @@ class PlaylistServiceImpl {
    * and stays stable across those two toggles.
    */
   getEpgEligibleChannels(): Channel[] {
-    if (!this.includeHidden && !StorageService.getShowHiddenChannels()) return this.channels;
+    if (!this.includeHidden && !StorageService.getShowHiddenChannels()) {
+      return this.unconcealedChannels;
+    }
     return ChannelCustomizationService.applyTo(this.allChannels, false);
+  }
+
+  // Parental "hide" mode drops locked channels from `channels`; stored data
+  // keyed to them (reminders, custom order) must still resolve.
+  getUnconcealedChannels(): Channel[] {
+    return this.unconcealedChannels;
   }
 
   /** Edit mode reveals hidden channels so they can be un-hidden again. */
@@ -771,6 +788,16 @@ class PlaylistServiceImpl {
       ? this.channelSearchByPlaylist.get(playlist) ?? []
       : this.channelSearchIndex;
     return rankPreparedTopK(index, query, limit);
+  }
+
+  getPlaylistIdsForGroup(group: ChannelGroupId): string[] {
+    this.ensureDerivedIndexes();
+    const sourceGroup = group.slice('source:'.length);
+    const ids: string[] = [];
+    this.channelsByPlaylistGroup.forEach((groups, playlistId) => {
+      if (groups.has(sourceGroup)) ids.push(playlistId);
+    });
+    return ids;
   }
 
   getGroupsForPlaylist(playlist?: string): string[] {

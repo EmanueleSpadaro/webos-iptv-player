@@ -89,6 +89,12 @@ export class AccountSwitcher {
       if (!this.shown) return;
       const hit = document.elementFromPoint(e.clientX, e.clientY);
       if (!hit) return;
+      // Several switchers can be mounted (tab bar, parental manager); each
+      // only answers to its own slot.
+      if (!this.slot.contains(hit)) {
+        if (this.open) this.closeMenu();
+        return;
+      }
       const row = hit.closest<HTMLElement>('.account-menu-item');
       if (row && row.dataset.accountId) { this.choose(row.dataset.accountId); return; }
       if (hit.closest('.account-avatar')) { this.open ? this.closeMenu() : this.openMenu(); return; }
@@ -99,7 +105,7 @@ export class AccountSwitcher {
     document.addEventListener('mouseover', (e: MouseEvent) => {
       if (!this.open) return;
       const row = (e.target as HTMLElement | null)?.closest<HTMLElement>('.account-menu-item');
-      if (!row || !row.dataset.accountId) return;
+      if (!row || !row.dataset.accountId || !this.slot.contains(row)) return;
       const idx = this.accounts.findIndex((a) => a.id === row.dataset.accountId);
       if (idx >= 0 && idx !== this.menuIndex) { this.menuIndex = idx; this.render(); }
     });

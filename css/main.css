@@ -194,7 +194,7 @@ h3 {
 }
 
 /* Buttons */
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry) {
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row) {
   transform-origin: center;
   transition:
     transform 160ms ease,
@@ -205,8 +205,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
     color var(--transition);
 }
 
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):hover,
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry).focused {
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):hover,
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row).focused {
   transform: scale(1.03);
 }
 
@@ -392,7 +392,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 /* Program-reminder & catch-up resume prompts — overlay modals */
 .reminder-prompt,
 .catchup-resume-prompt,
-.confirmation-prompt {
+.confirmation-prompt,
+.parental-pin-prompt {
   position: fixed;
   top: 0;
   right: 0;
@@ -406,13 +407,15 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 }
 .reminder-prompt.hidden,
 .catchup-resume-prompt.hidden,
-.confirmation-prompt.hidden {
+.confirmation-prompt.hidden,
+.parental-pin-prompt.hidden {
   display: none;
 }
 
 .reminder-dialog,
 .catchup-resume-dialog,
-.confirmation-dialog {
+.confirmation-dialog,
+.parental-pin-dialog {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);

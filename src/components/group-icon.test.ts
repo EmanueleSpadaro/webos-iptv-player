@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { matchGroupIcon, groupIcon } from './group-icon';
+import { matchGroupIcon, groupIcon, isAdultGroupName } from './group-icon';
 
 describe('matchGroupIcon', () => {
   describe('category matching', () => {
@@ -172,5 +172,16 @@ describe('Chrome 53 fallback', () => {
       vi.unstubAllGlobals();
       vi.resetModules();
     }
+  });
+});
+
+describe('isAdultGroupName', () => {
+  it('detects adult groups even when a higher-priority genre matches', () => {
+    expect(isAdultGroupName('Adult')).toBe(true);
+    expect(isAdultGroupName('XXX 18+')).toBe(true);
+    expect(isAdultGroupName('Kids XXX')).toBe(true);
+    expect(isAdultGroupName('成人')).toBe(true);
+    expect(isAdultGroupName('Kids')).toBe(false);
+    expect(isAdultGroupName('News')).toBe(false);
   });
 });

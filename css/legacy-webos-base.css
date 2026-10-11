@@ -114,4 +114,8 @@
   .episode-row > * + * { margin-left: 20px; }
   .episode-title > * + * { margin-left: 16px; }
   .account-menu-item > * + * { margin-left: 16px; }
+  .parental-header > * + * { margin-left: 32px; }
+  .parental-heading > * + * { margin-left: 32px; }
+  .parental-row > * + * { margin-left: 12px; }
+  .parental-pin-actions > * + * { margin-left: 16px; }
 }

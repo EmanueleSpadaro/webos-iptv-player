@@ -1,6 +1,7 @@
 import type { Action, CatchupInfo, Channel, PlaylistEntry, Programme, VodItem, SeriesItem } from '../types';
 import { SpatialNav } from '../navigation/spatial-nav';
-import { html } from '../utils/dom';
+import { html, raw } from '../utils/dom';
+import { channelLockBadge, seriesLockBadge, vodLockBadge } from './parental-badge';
 import { morph } from '../utils/morph';
 import { PlaylistService } from '../services/playlist-service';
 import { EpgService } from '../services/epg-service';
@@ -33,6 +34,7 @@ import {
   retainAppWorker,
   runAppWorkerTask,
 } from '../workers/app-worker-client';
+import { isSeriesConcealed, isVodConcealed } from '../services/parental-control';
 import type { SearchIndexRequest, SearchQueryResponse } from '../workers/tasks';
 
 const log = createLogger('Search');
@@ -131,7 +133,7 @@ export class Search {
     this.onSelect();
   }
 
-  async open(account: PlaylistEntry | null): Promise<void> {
+  async open(account: PlaylistEntry | null, query = ''): Promise<void> {
     this.active = true;
     if (!isAppWorkerRunning()) this.invalidateWorkerIndex();
     const reuseWorkerIndex = this.canReuseWorkerIndex(account);
@@ -146,7 +148,7 @@ export class Search {
       this.catalogExpiresAt = 0;
     }
     this.account = account;
-    this.query = '';
+    this.query = query;
     this.resultLimit = CONFIG.XTREAM.SEARCH_INITIAL_RESULTS;
     this.render();
     if (reuseWorkerIndex) return;
@@ -236,6 +238,19 @@ export class Search {
     }
   }
 
+  refreshLocks(): void {
+    if (this.container.querySelector('.search-view')) this.render();
+  }
+
+  // Locked content was hidden or revealed: drop the rendered results at once,
+  // since their indexes point into the old channel list, then search again.
+  async refreshConcealment(): Promise<void> {
+    this.invalidateCatalog();
+    if (!this.active) return;
+    this.queryPending = !!this.query.trim();
+    await this.open(this.account, this.query);
+  }
+
   invalidateCatalog(): void {
     this.catalogController?.abort();
     this.catalogController = null;
@@ -314,7 +329,7 @@ export class Search {
     // result instead of clobbering the current account's catalog.
     if (signal.aborted || this.account?.id !== account.id) return;
     if (vod.ok) {
-      this.allVod = vod.data;
+      this.allVod = vod.data.filter(item => !isVodConcealed(item));
     } else {
       log.error(
         'Movie search catalog load failed',
@@ -324,7 +339,7 @@ export class Search {
       );
     }
     if (series.ok) {
-      this.allSeries = series.data;
+      this.allSeries = series.data.filter(item => !isSeriesConcealed(item));
     } else {
       log.error(
         'Series search catalog load failed',
@@ -347,8 +362,8 @@ export class Search {
     if (!await workerReset) return;
     const indexed = await this.indexWorker({
       sessionId,
-      ...(vod.ok ? { movies: vod.data.map(item => item.name) } : {}),
-      ...(series.ok ? { series: series.data.map(item => item.name) } : {}),
+      ...(vod.ok ? { movies: this.allVod.map(item => item.name) } : {}),
+      ...(series.ok ? { series: this.allSeries.map(item => item.name) } : {}),
     });
     if (!indexed || signal.aborted || this.account?.id !== account.id) return;
     if (this.query.trim()) await this.startQuery(++this.queryGeneration);
@@ -480,7 +495,8 @@ export class Search {
     return html`
       <div class="catalog-tile search-channel-tile" data-focusable data-key="ch:${String(idx)}"
            data-channel-index="${String(idx)}">
-        <div class="catalog-poster-wrap">${this.posterCell(ch.name, ch.logo)}</div>
+        <div class="catalog-poster-wrap">${this.posterCell(ch.name, ch.logo)}${
+          raw(channelLockBadge(ch))}</div>
         <div class="catalog-tile-name">${ch.name}</div>
       </div>
     `;
@@ -495,7 +511,7 @@ export class Search {
         ${ch.logo
           ? html`<img class="search-row-logo" src="${ch.logo}" alt="" loading="lazy" onerror="this.style.display='none'">`
           : html`<div class="search-row-logo search-row-logo-empty">${ch.name.charAt(0)}</div>`}
-        <span class="search-row-name">${ch.name}</span>
+        <span class="search-row-name">${raw(channelLockBadge(ch))}${ch.name}</span>
       </div>
     `;
   }
@@ -503,7 +519,8 @@ export class Search {
   private movieTile(v: VodItem): ReturnType<typeof html> {
     return html`
       <div class="catalog-tile" data-focusable data-key="v:${v.streamId}" data-stream-id="${v.streamId}">
-        <div class="catalog-poster-wrap">${this.posterCell(v.name, v.poster)}</div>
+        <div class="catalog-poster-wrap">${this.posterCell(v.name, v.poster)}${
+          raw(vodLockBadge(v))}</div>
         <div class="catalog-tile-name">${v.name}</div>
       </div>
     `;
@@ -512,7 +529,8 @@ export class Search {
   private seriesTile(s: SeriesItem): ReturnType<typeof html> {
     return html`
       <div class="catalog-tile" data-focusable data-key="s:${s.seriesId}" data-series-id="${s.seriesId}">
-        <div class="catalog-poster-wrap">${this.posterCell(s.name, s.poster)}</div>
+        <div class="catalog-poster-wrap">${this.posterCell(s.name, s.poster)}${
+          raw(seriesLockBadge(s))}</div>
         <div class="catalog-tile-name">${s.name}</div>
       </div>
     `;

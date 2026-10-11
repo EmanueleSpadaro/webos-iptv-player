@@ -93,7 +93,7 @@ sweep every locale, both READMEs, and the setup page for the old term.
   its own catalog; never reuse English's two forms for ru, uk, or pl.
 - Keep every `{placeholder}` intact and grammatically placed; check
   agreement around it (es/fr/it/pt adjectives and verbs).
-- One neutral variant per language (`es` uses *ustedes*; `pt-BR`, not
+- One neutral variant per language (`es` uses *tú*; `pt-BR`, not
   `pt`).
 
 ### Simplified Chinese
@@ -122,9 +122,14 @@ a new term after review, add a row here.
 | EPG time offset | EPG time correction | EPG 时间校正 |
 | Audio track | Audio track | 音轨 |
 | Animation modes | Full / Reduced / Essential | 完整 / 均衡 / 基础 |
+| Parental feature toggle | Use parental controls | 开启家长控制 |
+| PIN re-ask timing | Ask for PIN again | 再次要求 PIN |
+| Item that differs from its group | Set separately | 单独设置 |
+| Group with some items locked | Partly locked | 部分锁定 |
 
 Rejected: 片单 (watchlist), 正在播放 for NOW, 节目单 (guide),
-全局频道 / "Global" for all channels, "programme".
+全局频道 / "Global" for all channels, "programme",
+"Exception" / 例外 (set separately), "Mixed" / 混合 (partly locked).
 
 ## Checks
 

@@ -15,6 +15,7 @@ import { t } from '../i18n';
 export class Movies extends CatalogView<VodCategory, VodItem> {
   protected get kicker(): string { return t('common.movies'); }
   protected readonly resumeKind: ResumeKind = 'vod';
+  protected readonly parentalKind = 'vod' as const;
   protected get emptyMessage(): string { return t('catalog.noMovies'); }
   protected get gridEmptyMessage(): string { return t('catalog.noMoviesCategory'); }
 
@@ -58,13 +59,13 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
   }
   protected heroFallback(): VodItem | null {
     return this.resumeToVod(this.resume[0]?.itemId ?? '')
-      ?? this.watchlistToVod(StorageService.getWatchlist(this.account!.id, 'vod')[0]?.itemId ?? '');
+      ?? this.watchlistToVod(this.visibleWatchlist('vod')[0]?.itemId ?? '');
   }
 
   private resumeToVod(streamId: string): VodItem | null {
     const r = this.resume.find((e) => e.itemId === streamId);
     if (!r) return null;
-    return { accountId: r.accountId, streamId: r.itemId, name: r.name, poster: r.poster, rating: '', categoryId: '', containerExtension: r.ext };
+    return { accountId: r.accountId, streamId: r.itemId, name: r.name, poster: r.poster, rating: '', categoryId: r.categoryId ?? '', containerExtension: r.ext };
   }
 
   protected continueRail(): Safe | '' {
@@ -74,7 +75,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
   }
 
   protected watchlistRail(): Safe | '' {
-    const entries = StorageService.getWatchlist(this.account!.id, 'vod');
+    const entries = this.visibleWatchlist('vod');
     return entries.length
       ? this.rail(t('common.watchlist'), entries.map((entry) => this.watchlistTile(entry)))
       : '';
@@ -86,14 +87,15 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
       <div class="catalog-tile" data-focusable data-key="w:${vod.streamId}"
            data-item-id="${vod.streamId}" data-category-id="${vod.categoryId}"
            data-watchlist-item="${vod.streamId}">
-        <div class="catalog-poster-wrap">${this.posterCell(vod.name, vod.poster)}</div>
+        <div class="catalog-poster-wrap">${this.posterCell(vod.name, vod.poster)}${
+          this.itemLockBadge(vod.categoryId, vod.streamId)}</div>
         <div class="catalog-tile-name">${vod.name}</div>
       </div>
     `;
   }
 
   private watchlistToVod(streamId: string): VodItem | null {
-    const entry = StorageService.getWatchlist(this.account!.id, 'vod')
+    const entry = this.visibleWatchlist('vod')
       .find((item) => item.itemId === streamId);
     return entry ? this.watchlistEntryToVod(entry) : null;
   }
@@ -178,6 +180,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
       accountId: a.id,
       itemId: vod.streamId,
       kind: 'vod',
+      categoryId: vod.categoryId,
       resumeSecs: resume && saved ? saved.position : 0,
       subtitles: this.currentInfo?.subtitles ?? [],
       watchlistQueue: this.openedFromWatchlist ? this.movieWatchlistQueue(vod.streamId) : undefined,
@@ -190,7 +193,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
   }
 
   private movieWatchlistQueue(streamId: string): VodQueueItem[] {
-    const entries = StorageService.getWatchlist(this.account!.id, 'vod');
+    const entries = this.visibleWatchlist('vod');
     const index = entries.findIndex((entry) => entry.itemId === streamId);
     if (index < 0) return [];
     return entries.slice(index + 1).map((entry) => {
@@ -202,6 +205,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
         accountId: vod.accountId,
         itemId: vod.streamId,
         kind: 'vod',
+        categoryId: vod.categoryId,
         subtitles: [],
       };
     });

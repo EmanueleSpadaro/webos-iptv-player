@@ -14,16 +14,19 @@ export class ReminderPrompt {
   private focus: 'ok' | 'cancel' = 'ok';
   private title = '';
   private channelName = '';
+  private locked = false;
 
   get visible(): boolean {
     return this.el !== null && !this.el.classList.contains('hidden');
   }
 
-  show(title: string, channelName: string, handlers: PromptHandlers): void {
+  // A locked reminder that hide mode conceals keeps its names out of the prompt.
+  show(title: string, channelName: string, handlers: PromptHandlers, locked = false): void {
     this.handlers = handlers;
     this.focus = 'ok';
     this.title = title;
     this.channelName = channelName;
+    this.locked = locked;
     if (!this.el) {
       this.el = document.createElement('div');
       this.el.className = 'reminder-prompt';
@@ -59,7 +62,7 @@ export class ReminderPrompt {
     if (!this.el) return;
     morph(this.el, html`
       <div class="reminder-dialog">
-        <p class="reminder-message">${t('reminder.message', {
+        <p class="reminder-message">${this.locked ? t('reminder.lockedMessage') : t('reminder.message', {
           channel: this.channelName,
           title: this.title,
         })}</p>

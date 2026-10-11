@@ -463,6 +463,28 @@ describe('Settings.render', () => {
     expect(onSave).toHaveBeenCalledWith('reload');
   });
 
+  it('asks the parental guard before turning a source off, not on', () => {
+    const authorize = vi.fn();
+    container.remove();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    settings = new Settings(
+      container, onSave, onChannelsChanged, undefined, undefined, undefined, authorize);
+    state.playlists = [{ id: 'p1', name: 'P1', url: 'http://a', source: 'url' }];
+    settings.render();
+    const entry = () => container.querySelector('#playlist-entries [data-source-entry]')!;
+
+    click('#playlist-entries .source-toggle');
+    expect(authorize).toHaveBeenCalledWith('p1', expect.any(Function), true);
+    expect(entry().classList.contains('source-disabled')).toBe(false);
+
+    authorize.mock.calls[0][1]();
+    expect(entry().classList.contains('source-disabled')).toBe(true);
+    click('#playlist-entries .source-toggle');
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect(entry().classList.contains('source-disabled')).toBe(false);
+  });
+
   it('reflects the auto-play state on the toggle', () => {
     state.autoPlay = true;
     settings.render();

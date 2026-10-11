@@ -87,6 +87,7 @@ Record<UserDataStore, UserDataRecord[]>
       'playback-progress': [],
       'recently-watched': [],
       'online-sub-picks': [],
+      'parental-control': [],
     };
   }
   try {

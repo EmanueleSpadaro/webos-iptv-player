@@ -227,6 +227,46 @@ describe('Player live preview', () => {
     expect(pipeline.load).toHaveBeenCalledWith(replacement.url, replacement.extras, undefined);
   });
 
+  it('retunes a refreshed URL without asking for the PIN again', () => {
+    const authorize = vi.fn((_channel: Channel, action: () => void) => { action(); return true; });
+    player.stop();
+    player = new Player(
+      container, vi.fn(), vi.fn(), () => true, vi.fn(), onStateChanged, canResume, authorize,
+    );
+    player.init(document.querySelector('video')!);
+    const oldChannel = { ...channels[0], url: `${channels[0].url}?token=old` };
+    playlist.channels = [oldChannel];
+    player.play(0);
+    playlist.channels = [{ ...oldChannel, url: `${channels[0].url}?token=new` }];
+    authorize.mockClear();
+    pipeline.load.mockClear();
+
+    player.syncCurrentIndex();
+
+    expect(authorize).not.toHaveBeenCalled();
+    expect(pipeline.load).toHaveBeenCalledOnce();
+  });
+
+  it('asks for the PIN on resume only in full screen, not in the list preview', () => {
+    const authorize = vi.fn((_channel: Channel, action: () => void) => { action(); return true; });
+    player.stop();
+    player = new Player(
+      container, vi.fn(), vi.fn(), () => true, vi.fn(), onStateChanged, canResume, authorize,
+    );
+    player.init(document.querySelector('video')!);
+    player.play(0);
+    playing();
+    player.suspend();
+    player.resume();
+    expect(authorize).toHaveBeenLastCalledWith(channels[0], expect.any(Function), false, true);
+
+    player.enterLivePreview();
+    playing();
+    player.suspend();
+    player.resume();
+    expect(authorize).toHaveBeenLastCalledWith(channels[0], expect.any(Function), true, false);
+  });
+
   it('restores live audio when expanding without touching playback state', () => {
     player.play(0);
     player.enterLivePreview();

@@ -21,6 +21,7 @@ import { show, hide } from '../utils/dom';
 import { channelKey } from '../utils/channel';
 import { dvrWindow, dvrState, type DvrWindow } from '../utils/dvr';
 import { PlaylistService } from '../services/playlist-service';
+import { ParentalControlService, liveParentalRequest } from '../services/parental-control';
 import { EpgService } from '../services/epg-service';
 import { StorageService } from '../services/storage-service';
 import { CONFIG } from '../config';
@@ -67,6 +68,7 @@ export class Player {
   private vod: VodPlayback | null = null;
   private upNextSeconds = 0;
   private upNextTimer: ReturnType<typeof setInterval> | null = null;
+  private upNextAuthorized = false;
   private pendingResumeSecs = 0;
   private pendingSeekTarget: number | null = null;
   private wasPlayingBeforeHide = false;
@@ -111,6 +113,22 @@ export class Player {
     onChannelHealthChanged: () => void = () => {},
     private onPlaybackStateChanged: () => void = () => {},
     private canResumePlayback: () => boolean = () => true,
+    private authorizeLive: (
+      channel: Channel,
+      action: () => void,
+      preview: boolean,
+      ask?: boolean,
+    ) => boolean = (_channel, action) => {
+      action();
+      return true;
+    },
+    private authorizeVod: (
+      item: VodPlayback,
+      action: () => void,
+    ) => boolean = (_item, action) => {
+      action();
+      return true;
+    },
   ) {
     this.container = container;
     this.onBack = onBack;
@@ -418,11 +436,36 @@ export class Player {
     // state alone can't say that: a seek into an unbuffered region also drops
     // readyState below HAVE_CURRENT_DATA.
     if (this.startupPending && this.videoEl.readyState < 2) this.startupWatchdog.start();
+    if (this.vod) {
+      this.reauthorizeVod(this.vod, this.videoEl);
+      return;
+    }
     if (!this.currentChannel) return;
     if (this.wasPlayingBeforeHide) {
       this.wasPlayingBeforeHide = false;
-      this.playResolved(this.currentChannel, this.currentIndex, this.catchupInfo || undefined);
+      const channel = this.currentChannel;
+      const index = this.currentIndex;
+      const catchup = this.catchupInfo || undefined;
+      const preview = this.livePreviewMode;
+      // Backgrounding relocks parental controls, so a locked channel asks again
+      // in full screen; a preview the user didn't start just stops.
+      if (!this.authorizeLive(channel, () => this.playResolved(channel, index, catchup), preview, !preview)) {
+        log.info('Resume waits for the parental PIN', 'event=parental.playback.relocked',
+          'kind=live', `preview=${String(preview)}`, `catchup=${String(!!catchup)}`);
+        this.stop();
+        if (!preview) this.onBack();
+      }
     }
+  }
+
+  private reauthorizeVod(v: VodPlayback, el: HTMLVideoElement): void {
+    const resumeSecs = this.pendingSeekTarget ?? (el.currentTime || v.resumeSecs);
+    const resumed: VodPlayback = { ...v, resumeSecs };
+    if (this.authorizeVod(resumed, () => { if (this.vod !== v) this.playVodResolved(resumed); })) return;
+    log.info('Resume waits for the parental PIN', 'event=parental.playback.relocked',
+      `kind=${v.kind}`);
+    this.stop();
+    v.onBack();
   }
 
   // Resolve the playable URL for a channel, applying the catch-up template when
@@ -510,13 +553,22 @@ export class Player {
   // scope: omit to keep whatever scope is already playing (channelUp/Down's
   // own internal calls do this); pass a ChannelScope to set a new one, or
   // null to explicitly clear it (e.g. a global number-entry jump).
-  play(channelIndex: number, catchup?: CatchupInfo, scope?: ChannelScope | null): void {
+  play(
+    channelIndex: number,
+    catchup?: CatchupInfo,
+    scope?: ChannelScope | null,
+    preview = this.livePreviewMode,
+  ): void {
     const channel = PlaylistService.getByIndex(channelIndex);
     if (!channel || !this.videoEl) {
       log.warn('play() ignored — no channel or video element', { channelIndex, hasChannel: !!channel });
       return;
     }
-    this.playResolved(channel, channelIndex, catchup, scope);
+    this.authorizeLive(
+      channel,
+      () => this.playResolved(channel, channelIndex, catchup, scope),
+      preview,
+    );
   }
 
   private playResolved(
@@ -581,6 +633,10 @@ export class Player {
   isVod(): boolean { return this.vod !== null; }
 
   playVod(v: VodPlayback): void {
+    this.authorizeVod(v, () => this.playVodResolved(v));
+  }
+
+  private playVodResolved(v: VodPlayback): void {
     if (this.liveSessionActive) this.rememberLiveAudio();
     this.playbackActive = true;
     this.livePreviewMode = false;
@@ -629,6 +685,7 @@ export class Player {
       updatedAt: Date.now(),
       episodeQueue: v.episodeQueue,
       watchlistOwner: v.watchlistOwner,
+      categoryId: v.categoryId,
     });
   }
 
@@ -761,7 +818,7 @@ export class Player {
       const queue = v.kind === 'episode' ? v.episodeQueue : v.watchlistQueue;
       const next = queue?.[0];
       if (next) {
-        this.startNextItem(next, queue?.slice(1) ?? [], v.kind === 'episode', v.onBack);
+        this.startNextItem(next, queue?.slice(1) ?? [], v.kind === 'episode', v.onBack, v);
         return;
       }
       v.onBack();
@@ -820,8 +877,11 @@ export class Player {
     remaining: VodQueueItem[],
     isEpisodeQueue: boolean,
     onBack: () => void,
+    finished: VodQueueItem,
   ): void {
     this.recreateVideoEl();
+    // The PIN unlocked the whole series, so its next episode continues.
+    this.upNextAuthorized = isEpisodeQueue && sameParentalItem(finished, next);
     this.vod = {
       ...next,
       resumeSecs: 0,
@@ -840,6 +900,7 @@ export class Player {
   }
 
   private clearUpNextTimer(): void {
+    this.upNextAuthorized = false;
     if (this.upNextTimer) clearInterval(this.upNextTimer);
     this.upNextTimer = null;
     this.upNextSeconds = 0;
@@ -848,8 +909,17 @@ export class Player {
   private playNextItem(): void {
     const next = this.vod;
     if (!next || !this.upNextTimer) return;
+    const authorized = this.upNextAuthorized;
+    log.debug('Up next starting', 'event=parental.upnext', `kind=${next.kind}`,
+      `sameItem=${String(authorized)}`);
     this.clearUpNextTimer();
-    this.playVod(next);
+    if (authorized) {
+      this.playVodResolved(next);
+      return;
+    }
+    // A locked next item waits for the PIN off the player, as a live resume
+    // does, so cancelling the prompt can't strand a blank up-next screen.
+    if (!this.authorizeVod(next, () => this.playVodResolved(next))) this.cancelNextItem();
   }
 
   private cancelNextItem(): void {
@@ -1343,14 +1413,29 @@ export class Player {
   }
 
   private globalChannelStep(delta: 1 | -1): void {
-    const len = PlaylistService.channels.length;
+    const channels = PlaylistService.channels;
+    const len = channels.length;
     if (!len) return;
-    const next = this.currentIndex >= 0
+    let next = this.currentIndex >= 0
       ? ((this.currentIndex + delta) % len + len) % len
       : delta > 0
         ? Math.min(this.currentIndexAnchor, len - 1)
         : Math.max(0, Math.min(this.currentIndexAnchor - 1, len - 1));
+    next = this.firstUnlocked(channels, next, delta);
     this.play(next);
+  }
+
+  // Surfing passes over parental-locked channels instead of stopping on a PIN
+  // prompt; they stay reachable from the list. If every other channel is locked,
+  // the next one prompts as usual.
+  private firstUnlocked(list: Channel[], start: number, delta: 1 | -1): number {
+    const len = list.length;
+    if (!ParentalControlService.enabled) return start;
+    for (let step = 0, i = start; step < len; step++, i = ((i + delta) % len + len) % len) {
+      if (list[i] === this.currentChannel) break;
+      if (ParentalControlService.decision(liveParentalRequest(list[i], 'play')).allowed) return i;
+    }
+    return start;
   }
 
   // channel_up/channel_down while the current channel was launched from a
@@ -1373,7 +1458,7 @@ export class Player {
       return;
     }
     const len = list.length;
-    const next = ((pos + delta) % len + len) % len;
+    const next = this.firstUnlocked(list, ((pos + delta) % len + len) % len, delta);
     const globalIndex = PlaylistService.indexOf(list[next]);
     if (globalIndex < 0) return;
     this.play(globalIndex);
@@ -1404,7 +1489,8 @@ export class Player {
     if (this.liveSessionActive && !this.catchupInfo
         && this.resolveStreamUrl(this.currentChannel, null)
           !== this.resolveStreamUrl(resolved.channel, null)) {
-      this.play(resolved.channelIndex);
+      // Already authorized: a refreshed stream URL must not ask for the PIN.
+      this.playResolved(resolved.channel, resolved.channelIndex);
       return;
     }
     this.currentChannel = resolved.channel;
@@ -1504,4 +1590,9 @@ export class Player {
     // plain global stepping, not whatever view was active before this jump.
     this.play(index, undefined, null);
   }
+}
+
+function sameParentalItem(a: VodQueueItem, b: VodQueueItem): boolean {
+  return a.accountId === b.accountId && a.kind === b.kind && !!a.parentalItemId
+    && a.parentalItemId === b.parentalItemId && a.categoryId === b.categoryId;
 }

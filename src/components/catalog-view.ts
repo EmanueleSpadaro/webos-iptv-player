@@ -1,8 +1,23 @@
-import type { Action, PlaylistEntry, ResumeEntry, ResumeKind, VodPlayback } from '../types';
+import type {
+  Action,
+  PlaylistEntry,
+  ResumeEntry,
+  ResumeKind,
+  VodPlayback,
+  WatchlistEntry,
+  WatchlistKind,
+} from '../types';
 import { SpatialNav } from '../navigation/spatial-nav';
-import { html, Safe } from '../utils/dom';
+import { html, raw, Safe } from '../utils/dom';
+import { categoryLockBadge, lockBadge } from './parental-badge';
 import { morph } from '../utils/morph';
 import { StorageService } from '../services/storage-service';
+import {
+  catalogParentalRequest,
+  isResumeConcealed,
+  isWatchlistConcealed,
+  ParentalControlService,
+} from '../services/parental-control';
 import { CONFIG } from '../config';
 import { t } from '../i18n';
 import { VirtualGrid } from '../utils/virtual-grid';
@@ -116,6 +131,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   protected abstract itemName(item: I): string;
   protected abstract itemPoster(item: I): string;
   protected abstract itemCategoryId(item: I): string;
+  protected abstract readonly parentalKind: 'vod' | 'series';
   protected abstract openDetail(item: I): Promise<void>;
   protected abstract renderDetail(restoreFocus?: boolean): void;
   protected abstract clearDetail(): void;                 // drop detail state on deep-link back
@@ -184,15 +200,19 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     this.gridCategory = null;
     this.categoryVirtualizer.setScrollOffset(0);
     this.gridVirtualizer.setScrollOffset(0);
-    this.resume = StorageService.getResumeList(account.id).filter((e) => e.kind === this.resumeKind);
+    this.resume = this.visibleResume(account.id);
     this.renderLoading();
     try {
       const categories = await this.loadCategories(account, signal);
       if (signal.aborted || this.account?.id !== account.id) return;
-      this.categories = categories;
+      this.categories = categories.filter(category => !ParentalControlService.isCategoryConcealed({
+        kind: this.parentalKind === 'vod' ? 'vod-category' : 'series-category',
+        accountId: account.id,
+        categoryId: category.id,
+      }));
       const railCats = this.categories.slice(0, CONFIG.XTREAM.RAIL_CATEGORIES);
       const loaded = await Promise.all(
-        railCats.map((c) => this.loadItems(account, c.id, signal)),
+        railCats.map((c) => this.loadVisibleItems(account, c.id, signal)),
       );
       if (signal.aborted || this.account?.id !== account.id) return;
       this.railGroups = railCats.map((category, i) => {
@@ -304,6 +324,35 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     hero.style.backgroundImage = bg ? `url('${bg}')` : 'none';
   }
 
+  // Concealed titles are dropped at load, so every rail, grid, and hero built
+  // from these lists stays free of them without per-render checks.
+  private async loadVisibleItems(
+    account: PlaylistEntry,
+    categoryId: string,
+    signal: AbortSignal,
+  ): Promise<I[]> {
+    const items = await this.loadItems(account, categoryId, signal);
+    if (!ParentalControlService.concealing) return items;
+    return items.filter(item => !ParentalControlService.isConcealed(
+      catalogParentalRequest(this.parentalKind, {
+        accountId: account.id,
+        categoryId: this.itemCategoryId(item) || categoryId,
+        name: this.itemName(item),
+        id: this.itemId(item),
+      }),
+    ));
+  }
+
+  private visibleResume(accountId: string): ResumeEntry[] {
+    return StorageService.getResumeList(accountId)
+      .filter(entry => entry.kind === this.resumeKind && !isResumeConcealed(entry));
+  }
+
+  protected visibleWatchlist(kind: WatchlistKind): WatchlistEntry[] {
+    return StorageService.getWatchlist(this.account!.id, kind)
+      .filter(entry => !isWatchlistConcealed(entry));
+  }
+
   protected findItem(categoryId: string, id: string): I | null {
     const inCat = this.itemsByCategory[categoryId] ?? [];
     return inCat.find((x) => this.itemId(x) === id) ?? this.fallbackItem(id);
@@ -318,7 +367,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     if (!this.itemsByCategory[categoryId]) {
       this.renderLoading();
       try {
-        this.itemsByCategory[categoryId] = await this.loadItems(
+        this.itemsByCategory[categoryId] = await this.loadVisibleItems(
           account,
           categoryId,
           signal,
@@ -346,13 +395,32 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
       : html`<div class="catalog-poster catalog-poster-empty">${name.charAt(0)}</div>`;
   }
 
+  protected itemLockBadge(categoryId: string, id: string): Safe {
+    return raw(lockBadge(ParentalControlService.lockState(
+      catalogParentalRequest(this.parentalKind, {
+        accountId: this.account?.id ?? '',
+        categoryId,
+        name: '',
+        id,
+      }),
+    )));
+  }
+
+  // Lock badges follow the unlock session without changing what is listed.
+  refreshLocks(): void {
+    if (!this.container.querySelector('.catalog-view')) return;
+    if (this.mode === 'browse') this.renderBrowse(false);
+    else if (this.mode === 'grid') this.renderGrid(false);
+  }
+
   protected tile(item: I): Safe {
     const id = this.itemId(item);
     const cat = this.itemCategoryId(item);
     return html`
       <div class="catalog-tile" data-focusable data-key="i:${cat}:${id}"
            data-item-id="${id}" data-category-id="${cat}">
-        <div class="catalog-poster-wrap">${this.posterCell(this.itemName(item), this.itemPoster(item))}</div>
+        <div class="catalog-poster-wrap">${this.posterCell(this.itemName(item), this.itemPoster(item))}${
+          this.itemLockBadge(cat, id)}</div>
         <div class="catalog-tile-name">${this.itemName(item)}</div>
       </div>
     `;
@@ -377,7 +445,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
 
   protected renderBrowse(restoreFocus = true): void {
     this.mode = 'browse';
-    this.resume = StorageService.getResumeList(this.account!.id).filter((e) => e.kind === this.resumeKind);
+    this.resume = this.visibleResume(this.account!.id);
     const hero = this.railGroups[0]?.items[0] ?? this.heroFallback();
     const continueRail = this.continueRail();
     const watchlistRail = this.watchlistRail();
@@ -431,7 +499,9 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
                                    data-category-virtual-index="${index}"
                                    style="left:${this.categoryVirtualizer.getItemOffset(index)}px">
                                 <div class="catalog-cat" data-focusable
-                                     data-key="c:${c.id}" data-category-id="${c.id}">${c.name}</div>
+                                     data-key="c:${c.id}" data-category-id="${c.id}">${
+                                  raw(categoryLockBadge(this.parentalKind, this.account!.id, c.id))
+                                }${c.name}</div>
                               </div>
                             `;
                           })}

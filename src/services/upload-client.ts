@@ -94,6 +94,7 @@ class UploadClientImpl {
         url: u.url,
         source: 'upload',
         count: u.count,
+        revision: u.createdAt,
         ...(previous?.enabled === false ? { enabled: false } : {}),
       };
     });
@@ -102,7 +103,7 @@ class UploadClientImpl {
       prevUpload.length !== uploadEntries.length ||
       uploadEntries.some((u) => !prevUpload.some(
         (p) => p.url === u.url && p.name === u.name && p.count === u.count
-          && p.enabled === u.enabled,
+          && p.revision === u.revision && p.enabled === u.enabled,
       ));
 
     if (!changed) {

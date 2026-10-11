@@ -3,7 +3,7 @@ import { createLogger } from '../utils/logger';
 const log = createLogger('PersistenceDB');
 
 const DB_NAME = 'iptv';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 export const EPG_STORE = 'epg-cache';
 export const CATALOG_STORE = 'catalog-cache';
@@ -30,6 +30,7 @@ export const USER_DATA_STORES = [
   'playback-progress',
   'recently-watched',
   'online-sub-picks',
+  'parental-control',
 ] as const;
 export type UserDataStore = typeof USER_DATA_STORES[number];
 export const USER_META_STORE = 'user-meta';

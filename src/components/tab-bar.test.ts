@@ -9,6 +9,7 @@ let onSearchQuery: ReturnType<typeof vi.fn>;
 let onSearchLeave: ReturnType<typeof vi.fn>;
 let onSearchClose: ReturnType<typeof vi.fn>;
 let onSelectAccount: ReturnType<typeof vi.fn>;
+let onLockNow: ReturnType<typeof vi.fn>;
 let bar: TabBar;
 
 beforeEach(() => {
@@ -20,7 +21,10 @@ beforeEach(() => {
   onSearchLeave = vi.fn();
   onSearchClose = vi.fn();
   onSelectAccount = vi.fn();
-  bar = new TabBar({ onSwitch, onEnter, onSearchQuery, onSearchLeave, onSearchClose, onSelectAccount });
+  onLockNow = vi.fn();
+  bar = new TabBar({
+    onSwitch, onEnter, onSearchQuery, onSearchLeave, onSearchClose, onSelectAccount, onLockNow,
+  });
   bar.setSections(true); // Xtream by default
   bar.setShown(true);
 });
@@ -286,5 +290,32 @@ describe('TabBar account switcher', () => {
     bar.setShown(false);
     bar.setShown(true);
     expect(document.querySelector('.account-menu')).toBe(null);
+  });
+});
+
+describe('TabBar parental lock', () => {
+  const lock = () => document.querySelector<HTMLElement>('[data-lock-now]');
+
+  it('shows Lock now only during an unlock session, between Search and the avatar', () => {
+    expect(lock()).toBe(null);
+    bar.setAccounts([{ id: 'a1', name: 'Alpha', url: 'http://host/a', source: 'xtream',
+      xtream: { username: 'u', password: 'p' } }], 'a1');
+    bar.setParentalSession(true);
+    expect(lock()?.textContent).toBe('Lock now');
+
+    bar.setActive('search');
+    bar.focus();
+    onSwitch.mockClear();
+    bar.handleAction('right');
+    expect(lock()?.classList.contains('focused')).toBe(true);
+    expect(onSwitch).not.toHaveBeenCalled();
+    bar.handleAction('select');
+    expect(onLockNow).toHaveBeenCalledTimes(1);
+
+    bar.handleAction('right');
+    expect(document.querySelector('.account-avatar')?.classList.contains('focused')).toBe(true);
+
+    bar.setParentalSession(false);
+    expect(lock()).toBe(null);
   });
 });

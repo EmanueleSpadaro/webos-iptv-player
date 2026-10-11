@@ -14,7 +14,10 @@ const { data, customization, playlistMock, epgMock, storageMock, recentMock, toa
     mk({ id: 'c', name: 'Charlie', group: 'News', url: 'http://host/c' }),
   ];
   const raw = channels.slice();
-  const data = { channels, raw, favorites: [] as string[], includeHidden: false };
+  const data = {
+    channels, raw, favorites: [] as string[], includeHidden: false,
+    unconcealed: null as Channel[] | null,
+  };
   const customization = { record: null as unknown };
 
   return {
@@ -31,6 +34,7 @@ const { data, customization, playlistMock, epgMock, storageMock, recentMock, toa
       indexOf: (ch: Channel) => channels.indexOf(ch),
       indexOfKey: (_key: string) => -1,
       getByIndex: (i: number) => channels[i] ?? null,
+      getUnconcealedChannels: () => data.unconcealed ?? channels,
       applyCustomization: vi.fn(),
       setIncludeHidden: vi.fn(),
     },
@@ -281,6 +285,23 @@ describe('ChannelList edit mode', () => {
       );
     });
 
+    it('asks the edit guard before the pencil opens editing from favorites management', () => {
+      const authorizeEdit = vi.fn();
+      list = new ChannelList(container, {
+        onChannelSelect: onSelect,
+        onChannelsChanged: vi.fn(),
+        onEpgMappingChanged,
+        onEpgOffsetChanged,
+        authorizeEdit,
+      });
+      manageFavorites();
+      hover(container.querySelector<HTMLElement>('[data-edit-channels]')!);
+      list.handleAction('select');
+
+      expect(authorizeEdit).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('.channel-view.editing')).toBeNull();
+    });
+
     it('uses a multi-select mode when editing favorites', () => {
       manageFavorites();
       expect(list.isEditing).toBe(true);
@@ -451,6 +472,23 @@ describe('ChannelList edit mode', () => {
     expect(channelItems()[0].classList.contains('grabbed')).toBe(true);
     list.handleAction('select');
     expect(container.querySelector('.grabbed')).toBeNull();
+  });
+
+  it('keeps channels concealed by parental controls in the saved order', () => {
+    const concealed = { ...data.channels[0], id: 'd', name: 'Delta', url: 'http://host/d' };
+    data.unconcealed = [data.channels[0], concealed, data.channels[1], data.channels[2]];
+    try {
+      enterEdit();
+      hover(channelItems()[2]);
+      list.handleAction('select');
+      list.handleAction('up');
+
+      const record = customization.record as { order: string[] };
+      const byKey = new Map(data.unconcealed.map(ch => [channelKey(ch), ch.name]));
+      expect(record.order.map(key => byKey.get(key))).toEqual(['Alpha', 'Delta', 'Charlie', 'Bravo']);
+    } finally {
+      data.unconcealed = null;
+    }
   });
 
   it('drags a channel with the Magic Remote mouse sequence', () => {
