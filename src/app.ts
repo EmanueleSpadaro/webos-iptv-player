@@ -154,7 +154,10 @@ class App {
     () => !this.sidebar.visible && !this.menu.visible,
     () => {
       this.sidebar.refresh();
-    }, () => this.livePreview?.refresh(),
+    }, () => {
+      this.livePreview?.refresh();
+      this.menu.refresh();
+    },
     () => this.livePreview?.canResumePlayback() ?? true,
     (channel, action, preview, ask = true) => {
       const request = liveParentalRequest(channel, preview ? 'preview' : 'play');
@@ -248,6 +251,8 @@ class App {
       (index) => this.player.selectSubtitleTrack(index),
       () => this.player.subtitleOffsetState(),
       () => this.player.openSubtitleOffset(),
+      () => this.player.getPlaybackRateState(),
+      (rate) => this.player.setPlaybackRate(rate),
     );
 
     this.movies = new Movies(this.views.movies, {

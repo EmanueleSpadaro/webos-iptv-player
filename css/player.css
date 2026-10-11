@@ -938,22 +938,24 @@
 .menu-dot.yellow { background: var(--remote-key-yellow); }
 .menu-dot.blue { background: var(--remote-key-blue); }
 
-/* Glyph in the color-dot slot */
+/* Icon in the color-dot slot */
+/* Icons are wider than the 14px dot; negative margins keep labels aligned. */
 .menu-icon {
-  width: 14px;
+  width: 22px;
+  margin: 0 -4px;
   flex-shrink: 0;
-  text-align: center;
-  font-size: 18px;
-  line-height: 1;
-}
-.menu-icon.audio { color: #9b59b6; }
-.menu-icon.subtitle {
-  color: #1abc9c;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.menu-icon.subtitle svg { display: block; width: 18px; height: 18px; }
+.menu-icon.audio { color: #9b59b6; }
+.menu-icon.subtitle { color: #1abc9c; }
+.menu-icon.speed { color: #f5b041; }
+.menu-icon svg { display: block; width: 22px; height: 22px; }
+/* Deeper shades for the light Frosted panel; the row label carries the meaning. */
+[data-overlay="frosted"] .menu-icon.audio { color: #8e44ad; }
+[data-overlay="frosted"] .menu-icon.subtitle { color: #00897b; }
+[data-overlay="frosted"] .menu-icon.speed { color: #d35400; }
 
 /* Current audio track shown on the "Audio Track" row */
 .player-menu .menu-item-value {

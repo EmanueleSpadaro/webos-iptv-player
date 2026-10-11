@@ -141,6 +141,8 @@ export const PT_BR_MESSAGES = {
   'player.audioTrack': 'Faixa de áudio',
   'player.subtitles': 'Legendas',
   'player.subtitleSync': 'Sincronização das legendas',
+  'player.playbackSpeed': 'Velocidade de reprodução',
+  'player.playbackSpeedFailed': 'Esta velocidade não é compatível com o vídeo atual.',
   'player.play': 'Reproduzir',
   'player.pause': 'Pausar',
   'player.resync': 'Ressincronizar áudio e vídeo',

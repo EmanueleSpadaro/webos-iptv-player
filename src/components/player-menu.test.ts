@@ -21,6 +21,7 @@ vi.mock('../services/playlist-service', () => ({
 }));
 
 import { PlayerMenu } from './player-menu';
+import type { PlaybackRateState } from '../services/playback-rate';
 
 // Number of colour actions before the "Audio Track" row in the main menu.
 const MENU_ACTIONS = 4;
@@ -37,6 +38,8 @@ let selectSubtitleTrack: ReturnType<typeof vi.fn>;
 let subtitleTracks: SubtitleTrackOption[];
 let getSubtitleOffsetState: ReturnType<typeof vi.fn>;
 let openSubtitleOffset: ReturnType<typeof vi.fn>;
+let getPlaybackRateState: ReturnType<typeof vi.fn>;
+let selectPlaybackRate: ReturnType<typeof vi.fn>;
 let menu: PlayerMenu;
 
 beforeEach(() => {
@@ -58,11 +61,14 @@ beforeEach(() => {
   selectSubtitleTrack = vi.fn();
   getSubtitleOffsetState = vi.fn(() => ({ available: false, label: '0.00 s' }));
   openSubtitleOffset = vi.fn();
+  getPlaybackRateState = vi.fn((): PlaybackRateState => ({ available: false, rate: 1 }));
+  selectPlaybackRate = vi.fn().mockResolvedValue(true);
   menu = new PlayerMenu(
     container, getCurrentChannel, onAction,
     getAudioTracks, selectAudioTrack,
     getSubtitleTracks, selectSubtitleTrack,
     getSubtitleOffsetState, openSubtitleOffset,
+    getPlaybackRateState, selectPlaybackRate,
   );
 });
 
@@ -375,6 +381,106 @@ describe('PlayerMenu', () => {
       const rows = items();
       expect(rows[1].classList.contains('unavailable')).toBe(false); // Off always selectable
       expect(rows[2].classList.contains('unavailable')).toBe(true);  // the track greyed
+    });
+  });
+
+  describe('playback speed sub-menu', () => {
+    beforeEach(() => {
+      getPlaybackRateState.mockReturnValue({ available: true, rate: 1.5 });
+    });
+
+    it('shows the active speed for seekable playback', () => {
+      menu.show();
+
+      const row = el.querySelector('[data-menu-action="__speed_open__"]');
+      expect(row).not.toBeNull();
+      expect(row!.querySelector('.menu-item-value')!.textContent).toBe('1.5x');
+    });
+
+    it('opens the speed picker with the active rate focused', () => {
+      menu.show();
+      el.querySelector<HTMLElement>('[data-menu-action="__speed_open__"]')!.click();
+
+      const rows = items();
+      expect(rows.map(row => row.dataset.playbackRate)).toEqual([
+        undefined, '0.5', '0.75', '1', '1.25', '1.5', '2',
+      ]);
+      expect(rows[5].classList.contains('focused')).toBe(true);
+      expect(rows[5].querySelector('.menu-check')!.textContent).toBe('✓');
+    });
+
+    it('applies a selected rate and returns to the main menu', async () => {
+      menu.show();
+      el.querySelector<HTMLElement>('[data-menu-action="__speed_open__"]')!.click();
+      el.querySelector<HTMLElement>('[data-playback-rate="2"]')!.click();
+      await Promise.resolve();
+
+      expect(selectPlaybackRate).toHaveBeenCalledWith(2);
+      expect(el.querySelector('[data-menu-action="__speed_open__"]')).not.toBeNull();
+      expect(menu.visible).toBe(true);
+    });
+
+    it('drops the speed row on refresh once the rate is found not to apply', () => {
+      menu.show();
+      getPlaybackRateState.mockReturnValue({ available: false, rate: 1 });
+      menu.refresh();
+
+      expect(el.querySelector('[data-menu-action="__speed_open__"]')).toBeNull();
+    });
+
+    it('moves focus off the speed row when refresh removes it', () => {
+      menu.show();
+      const speedIdx = items().findIndex(row => row.dataset.menuAction === '__speed_open__');
+      for (let i = 0; i < speedIdx; i++) menu.handleAction('down');
+      expect(items()[speedIdx].classList.contains('focused')).toBe(true);
+
+      getPlaybackRateState.mockReturnValue({ available: false, rate: 1 });
+      menu.refresh();
+
+      const focused = items().filter(row => row.classList.contains('focused'));
+      expect(focused).toEqual([items()[speedIdx - 1]]);
+    });
+
+    it('follows the pointer when refresh removes the focused speed row', () => {
+      audioTracks = [
+        { index: 0, label: 'Track 1', active: true },
+        { index: 1, label: 'Track 2', active: false },
+      ];
+      menu.show();
+      const speedIdx = items().findIndex(row => row.dataset.menuAction === '__speed_open__');
+      for (let i = 0; i < speedIdx; i++) menu.handleAction('down');
+      const audioRow = el.querySelector<HTMLElement>('[data-menu-action="__audio_open__"]')!;
+      const query = el.querySelector.bind(el);
+      vi.spyOn(el, 'querySelector').mockImplementation((selector: string) =>
+        selector === '.menu-item:hover' ? audioRow : query(selector));
+
+      getPlaybackRateState.mockReturnValue({ available: false, rate: 1 });
+      menu.refresh();
+
+      expect(items().filter(row => row.classList.contains('focused')))
+        .toEqual([el.querySelector('[data-menu-action="__audio_open__"]')]);
+    });
+
+    it('re-renders an open speed picker when the rate falls back', () => {
+      getPlaybackRateState.mockReturnValue({ available: true, rate: 2 });
+      menu.show();
+      el.querySelector<HTMLElement>('[data-menu-action="__speed_open__"]')!.click();
+
+      getPlaybackRateState.mockReturnValue({ available: true, rate: 1 });
+      menu.refresh();
+
+      const checked = items().filter(row => row.querySelector('.menu-check')?.textContent === '✓');
+      expect(checked.map(row => row.dataset.playbackRate)).toEqual(['1']);
+    });
+
+    it('leaves the speed picker on refresh once the rate is found not to apply', () => {
+      menu.show();
+      el.querySelector<HTMLElement>('[data-menu-action="__speed_open__"]')!.click();
+      getPlaybackRateState.mockReturnValue({ available: false, rate: 1 });
+      menu.refresh();
+
+      expect(el.querySelector('[data-playback-rate]')).toBeNull();
+      expect(menu.visible).toBe(true);
     });
   });
 

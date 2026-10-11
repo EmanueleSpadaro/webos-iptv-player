@@ -144,6 +144,8 @@ export const EN_MESSAGES = {
   'player.audioTrack': 'Audio Track',
   'player.subtitles': 'Subtitles',
   'player.subtitleSync': 'Subtitle Sync',
+  'player.playbackSpeed': 'Playback Speed',
+  'player.playbackSpeedFailed': 'This playback speed is not supported for the current video.',
   'player.play': 'Play',
   'player.pause': 'Pause',
   'player.resync': 'Resync audio and video',

@@ -141,6 +141,8 @@ export const FR_MESSAGES = {
   'player.audioTrack': 'Piste audio',
   'player.subtitles': 'Sous-titres',
   'player.subtitleSync': 'Synchronisation des sous-titres',
+  'player.playbackSpeed': 'Vitesse de lecture',
+  'player.playbackSpeedFailed': 'Cette vitesse n’est pas prise en charge pour la vidéo actuelle.',
   'player.play': 'Lire',
   'player.pause': 'Pause',
   'player.resync': 'Resynchroniser l’audio et la vidéo',

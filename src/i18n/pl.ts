@@ -145,6 +145,8 @@ export const PL_MESSAGES = {
   'player.audioTrack': 'Ścieżka dźwiękowa',
   'player.subtitles': 'Napisy',
   'player.subtitleSync': 'Synchronizacja napisów',
+  'player.playbackSpeed': 'Szybkość odtwarzania',
+  'player.playbackSpeedFailed': 'Ta szybkość nie jest obsługiwana dla bieżącego filmu.',
   'player.play': 'Odtwórz',
   'player.pause': 'Pauza',
   'player.resync': 'Zsynchronizuj dźwięk i obraz',

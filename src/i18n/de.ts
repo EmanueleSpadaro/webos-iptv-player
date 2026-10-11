@@ -141,6 +141,8 @@ export const DE_MESSAGES = {
   'player.audioTrack': 'Audiospur',
   'player.subtitles': 'Untertitel',
   'player.subtitleSync': 'Untertitel synchronisieren',
+  'player.playbackSpeed': 'Wiedergabegeschwindigkeit',
+  'player.playbackSpeedFailed': 'Diese Wiedergabegeschwindigkeit wird für das aktuelle Video nicht unterstützt.',
   'player.play': 'Abspielen',
   'player.pause': 'Pause',
   'player.resync': 'Audio und Video synchronisieren',

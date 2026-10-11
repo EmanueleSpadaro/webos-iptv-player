@@ -28,13 +28,19 @@ import { CONFIG } from '../config';
 import { StallWatchdog, type StallProbe, type StallRecovery } from '../utils/stall-watchdog';
 import { StartupWatchdog, type StartupFailure, type StartupProbe } from '../utils/startup-watchdog';
 import { resolutionBadge, hdrLabel, frameRateLabel, pickVariant, codecName, audioSummary, subtitleSummary, type StreamVariant, type MediaInfo } from '../utils/stream-info';
-import { extFromUrl, diagnosticStreamUrl } from '../utils/url';
+import { extFromUrl, diagnosticStreamUrl, streamUrlMime } from '../utils/url';
+import { isWebOS } from '../utils/platform';
 import { probeMedia } from '../services/media-probe';
 import { ChannelHealthService } from '../services/channel-health';
 import { createLogger } from '../utils/logger';
 import { t } from '../i18n';
 import { showToast } from './toast';
 import { PlayerPipeline, type PipelineManifest } from './player-pipeline';
+import {
+  PlaybackRateController,
+  type PlaybackRate,
+  type PlaybackRateState,
+} from '../services/playback-rate';
 import {
   PlayerOsd,
   type PlayerOsdSnapshot,
@@ -45,7 +51,7 @@ import { PlayerTracks } from './player-tracks';
 const log = createLogger('Player');
 
 // True on the TV's webOS WebView; false in desktop preview / tests.
-const isWebOS = /webOS|Web0S/i.test(navigator.userAgent);
+const STREAMING_MIMES = new Set(['application/vnd.apple.mpegurl', 'application/dash+xml']);
 
 export class Player {
   private container: HTMLElement;
@@ -56,6 +62,7 @@ export class Player {
   private videoEl: HTMLVideoElement | null = null;
   private pipeline: PlayerPipeline;
   private tracks: PlayerTracks;
+  private playbackRate: PlaybackRateController;
   private osd: PlayerOsd;
   private currentChannel: Channel | null = null;
   private currentIndex = -1;
@@ -154,6 +161,9 @@ export class Player {
       getVideoElement: () => this.videoEl,
       getChannel: () => this.currentChannel,
       getVod: () => this.vod,
+    });
+    this.playbackRate = new PlaybackRateController(() => this.videoEl, {
+      onFallback: () => this.onPlaybackRateFallback(),
     });
     this.osd = new PlayerOsd(container, {
       getSnapshot: () => this.osdSnapshot(),
@@ -280,6 +290,9 @@ export class Player {
     // The watchdog's own success condition — a decoded first frame, whether or
     // not playback was allowed to begin (autoplay can be rejected, or the user
     // can pause while the spinner is up).
+    onCurrent('canplay', () => {
+      this.playbackRate.reapply();
+    });
     onCurrent('loadeddata', () => {
       this.startupPending = false;
       if (this.catchupInfo) this.catchupVariantConfirmed = true;
@@ -301,11 +314,12 @@ export class Player {
       const recovered = this.errorRetryPending;
       if (recovered) {
         this.cancelErrorAdvance();
-        if (isWebOS) this.stallWatchdog.resume();
+        if (isWebOS()) this.stallWatchdog.resume();
       }
       update('playing');
       if (recovered) this.osd.render();
       log.info('playing', this.videoLabel(el), this.mediaState(el));
+      this.playbackRate.reapply();
       if (this.catchupInfo) this.catchupVariantConfirmed = true;
       this.startupWatchdog.stop();
       this.tracks.reapplyNativeSubtitleCompositor();
@@ -327,7 +341,7 @@ export class Player {
         const recovered = this.stallWatchdog.observeProgress(el.currentTime);
         if (recovered && this.errorRetryPending) {
           this.cancelErrorAdvance();
-          if (isWebOS) this.stallWatchdog.resume();
+          if (isWebOS()) this.stallWatchdog.resume();
           update('playing');
           this.osd.render();
         }
@@ -344,6 +358,7 @@ export class Player {
     });
     onCurrent('seeked', () => {
       log.info('seeked', this.videoLabel(el), this.mediaState(el));
+      this.playbackRate.reapply();
       this.reconcilePendingSeek(el, true);
       if (this.catchupInfo) this.saveCatchupProgress();
       this.refreshProgress();
@@ -578,6 +593,7 @@ export class Player {
     scope?: ChannelScope | null,
   ): void {
     if (!this.videoEl) return;
+    this.playbackRate.reset();
     if (this.liveSessionActive) this.rememberLiveAudio();
     this.playbackActive = true;
     this.stallWatchdog.stop();
@@ -627,7 +643,7 @@ export class Player {
     this.loadStream(url, channel.extras);
     this.showOSD();
     if (!this.livePreviewMode) show(this.container);
-    this.stallWatchdog.start(isWebOS, StorageService.getLiveReconnectAttempts());
+    this.stallWatchdog.start(isWebOS(), StorageService.getLiveReconnectAttempts());
   }
 
   isVod(): boolean { return this.vod !== null; }
@@ -644,6 +660,7 @@ export class Player {
     this.liveSessionActive = false;
     this.stallWatchdog.stop();
     if (!this.videoEl) { log.warn('playVod ignored — no video element'); return; }
+    this.playbackRate.reset();
     this.startPlaybackGeneration();
     log.info('playVod', v.title, '| resume', v.resumeSecs);
     this.saveCatchupProgress(); // save any active catch-up before switching to VOD
@@ -850,6 +867,7 @@ export class Player {
     this.startupPending = false;
     this.startupWatchdog.stop();
     this.tracks.stop();
+    this.playbackRate.reset();
     this.pipeline.destroy();
     if (this.videoEl) {
       this.videoEl.pause();
@@ -1050,7 +1068,7 @@ export class Player {
       this.errorAdvanceTimer = setTimeout(() => {
         this.errorAdvanceTimer = null;
         this.errorRetryPending = false;
-        if (this.stallWatchdog.recoverFromError() && isWebOS) {
+        if (this.stallWatchdog.recoverFromError() && isWebOS()) {
           this.stallWatchdog.resume();
         }
       }, 2000);
@@ -1517,6 +1535,45 @@ export class Player {
 
   selectSubtitleTrack(index: number): void {
     this.tracks.selectSubtitleTrack(index);
+  }
+
+  getPlaybackRateState(): PlaybackRateState {
+    return {
+      // webOS's native HLS/DASH pipeline accepts setPlayRate but keeps 1x.
+      // The Up Next countdown sets the queued vod before its media loads.
+      available: this.playbackActive && this.vod !== null &&
+        !STREAMING_MIMES.has(streamUrlMime(this.vod.url)) &&
+        !this.playbackRate.isRejected(),
+      rate: this.playbackRate.currentRate(),
+    };
+  }
+
+  private onPlaybackRateFallback(): void {
+    if (this.playbackRate.isRejected()) {
+      log.warn('Playback rate ignored by the pipeline', 'event=playback.rate.ignored',
+        this.playbackLabel());
+    } else {
+      log.warn('Playback rate reapply failed', 'event=playback.rate.lost',
+        this.playbackLabel());
+    }
+    showToast(t('player.playbackSpeedFailed'));
+    this.onPlaybackStateChanged();
+  }
+
+  async setPlaybackRate(rate: PlaybackRate): Promise<boolean> {
+    if (!this.getPlaybackRateState().available) return false;
+    const result = await this.playbackRate.setRate(rate);
+    if (result === 'superseded') return false;
+    const applied = result === 'applied';
+    if (!applied) {
+      log.warn('Playback rate change failed', 'event=playback.rate.failed',
+        this.playbackLabel(), `rate=${String(rate)}`);
+      showToast(t('player.playbackSpeedFailed'));
+    } else {
+      log.info('Playback rate changed', 'event=playback.rate.changed',
+        this.playbackLabel(), `rate=${String(rate)}`);
+    }
+    return applied;
   }
 
   handleAction(action: Action, event?: NumberEvent): void {

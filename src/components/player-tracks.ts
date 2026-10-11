@@ -40,6 +40,7 @@ import {
 } from '../utils/subtitle-tracks';
 import { channelKey, legacyChannelKey } from '../utils/channel';
 import { createLogger } from '../utils/logger';
+import { isWebOS } from '../utils/platform';
 import { $ } from '../utils/dom';
 import { t } from '../i18n';
 import { showToast } from './toast';
@@ -53,7 +54,6 @@ import type {
 import type { PipelineManifest, PlayerPipeline } from './player-pipeline';
 
 const log = createLogger('Player');
-const isWebOS = (): boolean => /webOS|Web0S/i.test(navigator.userAgent);
 
 // Picker sentinel for the in-band CEA-608/708 toggle. -1 is the synthetic "Off"
 // row; -2 is the single closed-caption entry, drawn by the native compositor via

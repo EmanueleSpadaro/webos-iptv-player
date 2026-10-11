@@ -107,7 +107,8 @@ async function openSearchOverlay(page: Page): Promise<void> {
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await page.keyboard.press('ArrowDown'); // Title Info -> Settings
-  await page.keyboard.press('ArrowDown'); // Settings -> Subtitles
+  await page.keyboard.press('ArrowDown'); // Settings -> Playback Speed
+  await page.keyboard.press('ArrowDown'); // Playback Speed -> Subtitles
   await page.keyboard.press('Enter');     // open the Subtitles sub-menu (focus lands on "Off")
   await expect(menu).toContainText('Search online');
   await page.keyboard.press('ArrowDown'); // Off -> Search online…

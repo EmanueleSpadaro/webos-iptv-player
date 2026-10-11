@@ -438,6 +438,10 @@ describe('Player catch-up seeking', () => {
 describe('Player catch-up pause/play', () => {
   beforeEach(() => player.play(0, CATCHUP)); // catch-up → OSD shown, finite duration
 
+  it('does not offer playback speed for native HLS catch-up', () => {
+    expect(player.getPlaybackRateState()).toEqual({ available: false, rate: 1 });
+  });
+
   it('renders a play/pause control', () => {
     expect(container.querySelector('[data-playpause]')).not.toBeNull();
   });
@@ -922,6 +926,21 @@ describe('Player native subtitle retry', () => {
   });
 });
 
+describe('Player native playback-rate retry', () => {
+  it('re-applies the selected speed as the native pipeline becomes playable', () => {
+    const reapply = vi.fn();
+    const internals = player as unknown as {
+      playbackRate: { reapply: () => void };
+    };
+    internals.playbackRate.reapply = reapply;
+
+    video.dispatchEvent(new Event('canplay'));
+    video.dispatchEvent(new Event('playing'));
+
+    expect(reapply).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('Player live DVR', () => {
   let live: HTMLVideoElement;
   let setWindow: (s: number, e: number) => void;
@@ -1192,6 +1211,44 @@ describe('Player VOD mode', () => {
     expect(player.canSeek()).toBe(true); // playVod shows the OSD
   });
 
+  it('offers and applies playback speed for VOD in the desktop preview', async () => {
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req());
+
+    expect(player.getPlaybackRateState()).toEqual({ available: true, rate: 1 });
+    await expect(player.setPlaybackRate(1.5)).resolves.toBe(true);
+    expect(video.playbackRate).toBe(1.5);
+    expect(player.getPlaybackRateState()).toEqual({ available: true, rate: 1.5 });
+  });
+
+  it('does not offer playback speed for HLS or DASH VOD', () => {
+    player.init(fakeVideo(3600));
+    player.playVod(req({ url: 'http://host:8080/movie/u/p/10.m3u8' }));
+    expect(player.getPlaybackRateState().available).toBe(false);
+
+    player.playVod(req({ url: 'http://host:8080/movie/u/p/10.mpd?t=1' }));
+    expect(player.getPlaybackRateState().available).toBe(false);
+
+    player.playVod(req({ url: 'http://host:8080/movie/u/p/10?output=m3u8' }));
+    expect(player.getPlaybackRateState().available).toBe(false);
+
+    player.playVod(req({ url: 'http://host:8080/movie/u/p/10?output_format=mpd' }));
+    expect(player.getPlaybackRateState().available).toBe(false);
+  });
+
+  it('resets playback speed when starting another VOD item', async () => {
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    await player.setPlaybackRate(2);
+
+    player.playVod(req({ itemId: '11', title: 'Movie Two' }));
+
+    expect(video.playbackRate).toBe(1);
+    expect(player.getPlaybackRateState()).toEqual({ available: true, rate: 1 });
+  });
+
   it('resyncAV seeks backward by RESYNC_SEEK_BACK on VOD', () => {
     const video = fakeVideo(3600);
     player.init(video);
@@ -1366,6 +1423,27 @@ describe('Player VOD mode', () => {
 
     expect(authorize).not.toHaveBeenCalled();
     expect(player.isVod()).toBe(true);
+  });
+
+  it('offers playback speed only once the queued item starts playing', async () => {
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    HTMLMediaElement.prototype.pause = vi.fn();
+    HTMLMediaElement.prototype.load = vi.fn();
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'duration', { value: 1800, configurable: true });
+    container.appendChild(video);
+    player.init(video);
+    const next = {
+      url: 'http://host:8080/movie/u/p/11.mp4', title: 'Movie Two',
+      poster: '', accountId: 'x1', itemId: '11', kind: 'vod' as const, subtitles: [],
+    };
+    player.playVod(req({ watchlistQueue: [next] }));
+
+    video.dispatchEvent(new Event('ended'));
+    expect(player.getPlaybackRateState().available).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(player.getPlaybackRateState().available).toBe(true);
   });
 
   it('counts down and automatically starts the next episode', async () => {

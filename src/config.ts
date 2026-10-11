@@ -61,6 +61,12 @@ export const CONFIG = {
     DVR_OLDEST_PAD: 3,          // Rewind stays inside the sliding window so its next refresh cannot strand playback
     RESYNC_SEEK_BACK: 0.5,      // manual A/V resync: seconds to seek back to force a native-pipeline flush
     RESYNC_TIMEOUT: 8000,       // ms safety cap to clear the "Resyncing…" message if `playing` never fires
+    PLAYBACK_RATE_MEDIA_POLL_MS: 250, // wait cadence for the native pipeline's video.mediaId
+    PLAYBACK_RATE_MEDIA_TIMEOUT: 5000, // max wait for video.mediaId before rejecting a rate change
+    PLAYBACK_RATE_LUNA_TIMEOUT: 3000, // max wait for com.webos.media/setPlayRate
+    PLAYBACK_RATE_REASSERT_MS: 250, // native pipeline may ignore the first accepted rate command
+    PLAYBACK_RATE_REASSERT_COUNT: 2, // initial command plus two reassertions proved stable on-device
+    PLAYBACK_RATE_VERIFY_MS: 3000, // playback sampled after a native rate change to confirm it took effect
     SUBTITLE_OFFSET_STEP: 0.25, // seconds per Left/Right press in the subtitle-sync adjuster
     SUBTITLE_OFFSET_MAX: 60,    // max |offset| the adjuster allows (seconds)
     SUBTITLE_SEARCH_TIMEOUT: 8000, // ms one online provider may take before the merged search gives up on it

@@ -137,14 +137,14 @@ test('episode playback suppresses the live channel sidebar and shows a VOD-only 
   await page.waitForTimeout(200);
   expect(await page.locator('#player-sidebar.visible').count()).toBe(0);
 
-  // The right edge opens the menu for an episode too, but as the VOD variant:
-  // Title Info and Settings only (this VOD exposes no audio/subtitle tracks) —
-  // never the live channel rows or the "Playing:" channel name.
+  // The right edge opens the VOD menu for an episode too, including playback
+  // speed but never the live channel rows or the "Playing:" channel name.
   await page.mouse.move(1900, 540);
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await expect(menu).toContainText('Title Info');
   await expect(menu).toContainText('Settings');
+  await expect(menu).toContainText('Playback Speed');
   expect(await menu.textContent()).not.toContain('Program Guide');
   expect(await menu.textContent()).not.toContain('Toggle Favorite');
   expect(await menu.textContent()).not.toContain('Playing:');

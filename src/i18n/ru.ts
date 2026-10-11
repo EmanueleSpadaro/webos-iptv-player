@@ -145,6 +145,8 @@ export const RU_MESSAGES = {
   'player.audioTrack': 'Аудиодорожка',
   'player.subtitles': 'Субтитры',
   'player.subtitleSync': 'Синхронизация субтитров',
+  'player.playbackSpeed': 'Скорость воспроизведения',
+  'player.playbackSpeedFailed': 'Эта скорость не поддерживается для текущего видео.',
   'player.play': 'Воспроизвести',
   'player.pause': 'Пауза',
   'player.resync': 'Синхронизировать аудио и видео',

@@ -167,17 +167,22 @@ test('VOD playback suppresses the live channel sidebar and shows a VOD-only menu
   await page.waitForTimeout(200);
   expect(await page.locator('#player-sidebar.visible').count()).toBe(0);
 
-  // The right edge opens the menu for VOD too, but as the VOD variant: Title
-  // Info and Settings only (this VOD exposes no audio/subtitle tracks) — never
-  // the live channel rows or the "Playing:" channel name.
+  // The right edge opens the VOD menu with playback speed, but never the live
+  // channel rows or the "Playing:" channel name.
   await page.mouse.move(1900, 540);
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await expect(menu).toContainText('Title Info');
   await expect(menu).toContainText('Settings');
+  await expect(menu).toContainText('Playback Speed');
   expect(await menu.textContent()).not.toContain('Program Guide');
   expect(await menu.textContent()).not.toContain('Toggle Favorite');
   expect(await menu.textContent()).not.toContain('Playing:');
+
+  await menu.locator('[data-menu-action="__speed_open__"]').click();
+  await menu.locator('[data-playback-rate="1.5"]').click();
+  await expect.poll(() => page.locator('#video-player')
+    .evaluate((video: HTMLVideoElement) => video.playbackRate)).toBe(1.5);
 });
 
 test('a VOD sidecar subtitle creates its application track when selected', async ({ page }) => {
@@ -212,7 +217,8 @@ test('a VOD sidecar subtitle creates its application track when selected', async
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await page.keyboard.press('ArrowDown'); // Title Info -> Settings
-  await page.keyboard.press('ArrowDown'); // Settings -> Subtitles
+  await page.keyboard.press('ArrowDown'); // Settings -> Playback Speed
+  await page.keyboard.press('ArrowDown'); // Playback Speed -> Subtitles
   await page.keyboard.press('Enter');     // open the Subtitles sub-menu
   await expect(menu).toContainText('Track 1');
 
@@ -257,7 +263,8 @@ test('a VOD ASS sidecar renders through the assjs overlay when selected', async 
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await page.keyboard.press('ArrowDown'); // Title Info -> Settings
-  await page.keyboard.press('ArrowDown'); // Settings -> Subtitles
+  await page.keyboard.press('ArrowDown'); // Settings -> Playback Speed
+  await page.keyboard.press('ArrowDown'); // Playback Speed -> Subtitles
   await page.keyboard.press('Enter');     // open the Subtitles sub-menu
   await expect(menu).toContainText('ASS 1');
 

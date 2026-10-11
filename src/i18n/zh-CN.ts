@@ -139,6 +139,8 @@ export const ZH_CN_MESSAGES = {
   'player.audioTrack': '音轨',
   'player.subtitles': '字幕',
   'player.subtitleSync': '字幕同步',
+  'player.playbackSpeed': '播放速度',
+  'player.playbackSpeedFailed': '当前视频不支持此播放速度。',
   'player.play': '播放',
   'player.pause': '暂停',
   'player.resync': '重新同步音视频',

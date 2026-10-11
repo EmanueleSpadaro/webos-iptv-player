@@ -1,8 +1,13 @@
 import type { Action, AudioTrackOption, Channel, SubtitleTrackOption } from '../types';
 import { $, html, raw } from '../utils/dom';
 import { morph } from '../utils/morph';
-import { SUBTITLE_ICON } from './icons';
+import { AUDIO_ICON, SPEED_ICON, SUBTITLE_ICON } from './icons';
 import { t } from '../i18n';
+import {
+  PLAYBACK_RATES,
+  type PlaybackRate,
+  type PlaybackRateState,
+} from '../services/playback-rate';
 
 const AUTO_HIDE_MS = 5000;
 
@@ -25,6 +30,8 @@ const PICK_AUDIO = '__audio_track__';
 const OPEN_SUBS = '__subs_open__';
 const PICK_SUB = '__subs_track__';
 const OPEN_OFFSET = '__subs_offset__';
+const OPEN_SPEED = '__speed_open__';
+const PICK_SPEED = '__speed_rate__';
 
 /**
  * The action overlay shown on the right edge during playback. Owns its own
@@ -45,10 +52,12 @@ export class PlayerMenu {
   private selectSubtitleTrack: (index: number) => void;
   private getSubtitleOffsetState: () => { available: boolean; label: string };
   private openSubtitleOffset: () => void;
+  private getPlaybackRateState: () => PlaybackRateState;
+  private selectPlaybackRate: (rate: PlaybackRate) => Promise<boolean>;
   private isVisible = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private focusIdx = 0;
-  private mode: 'main' | 'audio' | 'subtitles' = 'main';
+  private mode: 'main' | 'audio' | 'subtitles' | 'speed' = 'main';
 
   constructor(
     container: HTMLElement,
@@ -60,6 +69,8 @@ export class PlayerMenu {
     selectSubtitleTrack: (index: number) => void,
     getSubtitleOffsetState: () => { available: boolean; label: string },
     openSubtitleOffset: () => void,
+    getPlaybackRateState: () => PlaybackRateState,
+    selectPlaybackRate: (rate: PlaybackRate) => Promise<boolean>,
   ) {
     this.getCurrentChannel = getCurrentChannel;
     this.onAction = onAction;
@@ -69,6 +80,8 @@ export class PlayerMenu {
     this.selectSubtitleTrack = selectSubtitleTrack;
     this.getSubtitleOffsetState = getSubtitleOffsetState;
     this.openSubtitleOffset = openSubtitleOffset;
+    this.getPlaybackRateState = getPlaybackRateState;
+    this.selectPlaybackRate = selectPlaybackRate;
     this.el = $('#player-menu', container);
     this.bindEvents();
   }
@@ -104,6 +117,31 @@ export class PlayerMenu {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+  }
+
+  // Re-reads player state, e.g. after a speed change was found not to apply.
+  refresh(): void {
+    if (!this.isVisible) return;
+    if (this.mode === 'speed') {
+      if (this.getPlaybackRateState().available) this.render();
+      else this.openMain();
+      return;
+    }
+    if (this.mode !== 'main' || !this.el) return;
+    const rows = (): HTMLElement[] => Array.from(this.el!.querySelectorAll<HTMLElement>('.menu-item'));
+    const focusedAction = rows()[this.focusIdx]?.dataset.menuAction;
+    this.render();
+    // Keep focus on the same action. If its row went away, follow the pointer
+    // if it rests on a row, else step to the row above.
+    const idx = rows().findIndex(row => row.dataset.menuAction === focusedAction);
+    const hovered = rows().indexOf(this.el.querySelector<HTMLElement>('.menu-item:hover')!);
+    const next = idx >= 0 ? idx
+      : hovered >= 0 ? hovered
+        : Math.max(0, Math.min(this.focusIdx - 1, rows().length - 1));
+    if (next !== this.focusIdx) {
+      this.focusIdx = next;
+      this.render();
     }
   }
 
@@ -176,6 +214,8 @@ export class PlayerMenu {
       this.openAudio();
     } else if (action === OPEN_SUBS) {
       this.openSubtitles();
+    } else if (action === OPEN_SPEED) {
+      this.openSpeed();
     } else if (action === BACK) {
       this.openMain();
     } else if (action === PICK_AUDIO) {
@@ -189,6 +229,14 @@ export class PlayerMenu {
     } else if (action === OPEN_OFFSET) {
       this.hide();
       this.openSubtitleOffset();
+    } else if (action === PICK_SPEED) {
+      const rate = Number(item.dataset.playbackRate) as PlaybackRate;
+      if (PLAYBACK_RATES.indexOf(rate) !== -1) {
+        this.openMain();
+        void this.selectPlaybackRate(rate).then(() => {
+          if (this.isVisible && this.mode === 'main') this.render();
+        });
+      }
     } else if (action) {
       this.hide();
       this.onAction(action as Action);
@@ -214,6 +262,14 @@ export class PlayerMenu {
     this.resetTimer();
   }
 
+  private openSpeed(): void {
+    this.mode = 'speed';
+    const active = PLAYBACK_RATES.indexOf(this.getPlaybackRateState().rate);
+    this.focusIdx = active >= 0 ? active + 1 : 1;
+    this.render();
+    this.resetTimer();
+  }
+
   private openMain(): void {
     this.mode = 'main';
     this.focusIdx = 0;
@@ -224,6 +280,7 @@ export class PlayerMenu {
   private render(): void {
     if (this.mode === 'audio') this.renderAudio();
     else if (this.mode === 'subtitles') this.renderSubtitles();
+    else if (this.mode === 'speed') this.renderSpeed();
     else this.renderMain();
     this.scrollFocusedIntoView();
   }
@@ -239,10 +296,12 @@ export class PlayerMenu {
     const activeTrack = tracks.find(t => t.active);
     const subtitles = this.getSubtitleTracks();
     const activeSub = subtitles.find(t => t.active);
+    const speed = this.getPlaybackRateState();
 
+    const speedRowIdx = rows.length;
     const audioShown = tracks.length >= 2;
-    const audioRowIdx = rows.length;
-    const subsRowIdx = rows.length + (audioShown ? 1 : 0);
+    const audioRowIdx = rows.length + (speed.available ? 1 : 0);
+    const subsRowIdx = audioRowIdx + (audioShown ? 1 : 0);
 
     morph(el, html`
       <div class="menu-header">
@@ -258,22 +317,60 @@ export class PlayerMenu {
             <span class="menu-item-label">${t(item.labelKey)}</span>
           </div>
         `)}
+        ${speed.available ? html`
+          <div class="menu-item ${speedRowIdx === this.focusIdx ? 'focused' : ''}"
+               data-key="${OPEN_SPEED}"
+               data-focusable data-menu-action="${OPEN_SPEED}">
+            <span class="menu-icon speed">${raw(SPEED_ICON)}</span>
+            <span class="menu-item-label">${t('player.playbackSpeed')}</span>
+            <span class="menu-item-value">${speed.rate}x</span>
+          </div>
+        ` : ''}
         ${audioShown ? html`
           <div class="menu-item ${audioRowIdx === this.focusIdx ? 'focused' : ''}"
+               data-key="${OPEN_AUDIO}"
                data-focusable data-menu-action="${OPEN_AUDIO}">
-            <span class="menu-icon audio">♫</span>
+            <span class="menu-icon audio">${raw(AUDIO_ICON)}</span>
             <span class="menu-item-label">${t('player.audioTrack')}</span>
             <span class="menu-item-value">${activeTrack?.label || ''}</span>
           </div>
         ` : ''}
         ${subtitles.length >= 1 ? html`
           <div class="menu-item ${subsRowIdx === this.focusIdx ? 'focused' : ''}"
+               data-key="${OPEN_SUBS}"
                data-focusable data-menu-action="${OPEN_SUBS}">
             <span class="menu-icon subtitle">${raw(SUBTITLE_ICON)}</span>
             <span class="menu-item-label">${t('player.subtitles')}</span>
             <span class="menu-item-value">${activeSub?.label || t('common.off')}</span>
           </div>
         ` : ''}
+      </div>
+    `);
+  }
+
+  private renderSpeed(): void {
+    const el = this.el;
+    if (!el) return;
+    const active = this.getPlaybackRateState().rate;
+
+    morph(el, html`
+      <div class="menu-header">
+        <h2>${t('player.playbackSpeed')}</h2>
+      </div>
+      <div class="menu-items">
+        <div class="menu-item ${this.focusIdx === 0 ? 'focused' : ''}"
+             data-focusable data-menu-action="${BACK}">
+          <span class="menu-check menu-back">‹</span>
+          <span class="menu-item-label">${t('common.back')}</span>
+        </div>
+        ${PLAYBACK_RATES.map((rate, i) => html`
+          <div class="menu-item ${this.focusIdx === i + 1 ? 'focused' : ''}"
+               data-focusable data-menu-action="${PICK_SPEED}"
+               data-playback-rate="${rate}">
+            <span class="menu-check">${rate === active ? '✓' : ''}</span>
+            <span class="menu-track-label">${rate}x</span>
+          </div>
+        `)}
       </div>
     `);
   }

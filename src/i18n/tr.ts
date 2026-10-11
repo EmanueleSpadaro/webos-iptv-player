@@ -139,6 +139,8 @@ export const TR_MESSAGES = {
   'player.audioTrack': 'Ses Parçası',
   'player.subtitles': 'Altyazılar',
   'player.subtitleSync': 'Altyazı Eşitleme',
+  'player.playbackSpeed': 'Oynatma Hızı',
+  'player.playbackSpeedFailed': 'Bu hız mevcut video için desteklenmiyor.',
   'player.play': 'Oynat',
   'player.pause': 'Duraklat',
   'player.resync': 'Ses ve görüntüyü eşitle',

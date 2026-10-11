@@ -145,6 +145,8 @@ export const UK_MESSAGES = {
   'player.audioTrack': 'Аудіодоріжка',
   'player.subtitles': 'Субтитри',
   'player.subtitleSync': 'Синхронізація субтитрів',
+  'player.playbackSpeed': 'Швидкість відтворення',
+  'player.playbackSpeedFailed': 'Ця швидкість не підтримується для поточного відео.',
   'player.play': 'Відтворити',
   'player.pause': 'Пауза',
   'player.resync': 'Синхронізувати аудіо й відео',
