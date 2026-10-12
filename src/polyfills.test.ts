@@ -9,6 +9,7 @@ import {
   scrollIntoViewFallback,
   selectPluralCategory,
 } from './polyfills';
+import { localeOptions } from './i18n';
 
 function rect(top: number, bottom: number, left = 0, right = 100): DOMRect {
   return {
@@ -126,6 +127,26 @@ describe('Intl.PluralRules polyfill', () => {
     expect(selectPluralCategory('ru', 5)).toBe('many');
     expect(selectPluralCategory('uk', 22)).toBe('few');
     expect(selectPluralCategory('zh', 1)).toBe('other');
+    expect(selectPluralCategory('pl', 1)).toBe('one');
+    expect(selectPluralCategory('pl', 2)).toBe('few');
+    expect(selectPluralCategory('pl', 5)).toBe('many');
+    expect(selectPluralCategory('pl', 12)).toBe('many');
+    expect(selectPluralCategory('pl', 21)).toBe('many');
+    expect(selectPluralCategory('pl', 22)).toBe('few');
+    expect(selectPluralCategory('tr', 1)).toBe('one');
+    expect(selectPluralCategory('tr', 2)).toBe('other');
+    expect(selectPluralCategory('tr', 0)).toBe('other');
+  });
+
+  it('matches the native rules for every app locale', () => {
+    for (const { value: locale } of localeOptions()) {
+      const native = new Intl.PluralRules(locale);
+      const language = locale.toLowerCase().split('-')[0];
+      for (let count = 0; count <= 1000; count++) {
+        expect(`${locale} ${count}: ${selectPluralCategory(language, count)}`)
+          .toBe(`${locale} ${count}: ${native.select(count)}`);
+      }
+    }
   });
 
   it('installs only when the native implementation is unavailable', async () => {
