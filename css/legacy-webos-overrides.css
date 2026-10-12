@@ -116,10 +116,6 @@
     display: inline-block;
   }
 
-  .dropdown-sizer {
-    display: none;
-  }
-
   .reminder-day-label {
     flex: 0 0 112px;
   }

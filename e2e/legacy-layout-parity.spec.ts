@@ -156,6 +156,50 @@ interface Screen {
   go: (page: Page) => Promise<void>;
 }
 
+async function openSettingsPane(p: Page, pane: string): Promise<void> {
+  await enterTab(p, 'settings');
+  // The stubbed service makes the panel render for real and refreshes the
+  // upload list; both land after the view opens, so wait for them before
+  // placing the column.
+  await expect(p.locator('.setup-qr')).toBeVisible();
+  await expect(p.locator('#upload-entries .empty-hint')).toBeVisible();
+  // Clicking the nav item starts the app's scroll animation, which can still
+  // be running when the frame is taken; that behavior has its own spec.
+  // Place the column where the animation would rest instead — sampling the
+  // top of every pane would be steadier, but then nothing below the fold is
+  // ever compared.
+  await p.evaluate((name) => {
+    const scroll = document.querySelector('.settings-scroll') as HTMLElement;
+    const target = document.querySelector(`#settings-${name}`)!;
+    // The scroller sets `scroll-behavior: smooth`, so even assigning
+    // scrollTop animates. Go through `setProperty`: the simulation deletes
+    // the CSSOM reflection but cannot take the property away from the real
+    // engine.
+    scroll.style.setProperty('scroll-behavior', 'auto');
+    scroll.scrollTop += target.getBoundingClientRect().top
+      - scroll.getBoundingClientRect().top;
+  }, pane);
+  await expect(p.locator(`.settings-nav-item.active[data-settings-target="${pane}"]`))
+    .toBeVisible();
+}
+
+// Turning parental controls on persists across reloads, so these screens run
+// after every screen that would otherwise meet a PIN prompt.
+const PIN = '1234';
+
+async function enterPin(p: Page): Promise<void> {
+  await p.locator('.parental-pin-prompt .parental-pin-input').fill(PIN);
+}
+
+/** Leave the manager with an unlock duration of "Once", so locks apply. */
+async function leaveParentalLocked(p: Page): Promise<void> {
+  await p.locator('[data-parental-tab="options"]').click();
+  await p.locator('#parental-duration [data-value="once"]').click();
+  await expect(p.locator('#parental-duration .active')).toHaveAttribute('data-value', 'once');
+  await p.locator('[data-parental-back]').click();
+  await expect(p.locator('#view-parental-controls')).toBeHidden();
+}
+
 const M3U_SCREENS: Screen[] = [
   { name: 'live', budget: 0, go: async () => { /* the landing view */ } },
   { name: 'guide', budget: 0, go: (p) => enterTab(p, 'epg') },
@@ -169,44 +213,30 @@ const M3U_SCREENS: Screen[] = [
       await expect(p.locator('.epg-group-menu')).toHaveCount(0);
     },
   },
-  ...(['general', 'sources', 'guide', 'appearance', 'playback', 'subtitles', 'data']
+  ...(['general', 'sources', 'guide', 'appearance', 'playback', 'subtitles', 'advanced', 'data']
     .map((pane) => ({
       name: `settings-${pane}`,
       // The data pane prints a storage quota, and `navigator.storage` is
       // Chromium 55 — so webOS 4 estimates it another way. Environment, not
       // layout.
       budget: pane === 'data' ? 0.0005 : 0,
-      go: async (p: Page) => {
-        await enterTab(p, 'settings');
-        // The stubbed service makes the panel render for real and refreshes
-        // the upload list; both land after the view opens, so wait for them
-        // before placing the column.
-        await expect(p.locator('.setup-qr')).toBeVisible();
-        await expect(p.locator('#upload-entries .empty-hint')).toBeVisible();
-        // Clicking the nav item starts the app's scroll animation, which can
-        // still be running when the frame is taken; that behaviour has its own
-        // spec. Place the column where the animation would rest instead —
-        // sampling the top of every pane would be steadier, but then nothing
-        // below the fold is ever compared.
-        await p.evaluate((name) => {
-          const scroll = document.querySelector('.settings-scroll') as HTMLElement;
-          const target = document.querySelector(`#settings-${name}`)!;
-          // The scroller sets `scroll-behavior: smooth`, so even assigning
-          // scrollTop animates. Go through `setProperty`: the simulation
-          // deletes the CSSOM reflection but cannot take the property away
-          // from the real engine.
-          scroll.style.setProperty('scroll-behavior', 'auto');
-          scroll.scrollTop += target.getBoundingClientRect().top
-            - scroll.getBoundingClientRect().top;
-        }, pane);
-        await expect(p.locator(`.settings-nav-item.active[data-settings-target="${pane}"]`))
-          .toBeVisible();
-      },
+      go: (p: Page) => openSettingsPane(p, pane),
     }))),
+  {
+    name: 'settings-dropdown-open',
+    budget: 0,
+    go: async (p) => {
+      await openSettingsPane(p, 'appearance');
+      await p.locator('#text-size [data-dropdown-trigger]').click();
+      await expect(p.locator('#text-size.open .dropdown-menu')).toBeVisible();
+    },
+  },
   {
     name: 'settings-guide-multi-source',
     budget: 0,
     go: async (p) => {
+      await p.keyboard.press('Escape');
+      await expect(p.locator('#text-size.open')).toHaveCount(0);
       await enterTab(p, 'settings');
       await p.locator('[data-settings-target="guide"]').click();
       await p.locator('#add-epg-source').click();
@@ -416,6 +446,64 @@ const M3U_SCREENS: Screen[] = [
     },
   },
   {
+    name: 'parental-pin-create',
+    budget: 0,
+    go: async (p) => {
+      await p.keyboard.press('Escape');
+      await expect(p.locator('.reminder-prompt:not(.hidden)')).toHaveCount(0);
+      await openSettingsPane(p, 'general');
+      await p.locator('#manage-parental-controls').click();
+      await expect(p.locator('.parental-pin-prompt .parental-pin-dialog')).toBeVisible();
+    },
+  },
+  {
+    name: 'parental-controls',
+    budget: 0,
+    go: async (p) => {
+      await enterPin(p);
+      await expect(p.locator('.parental-pin-prompt h2')).toContainText('Confirm');
+      await enterPin(p);
+      await expect(p.locator('#view-parental-controls')).toBeVisible();
+      const news = p.locator('[data-parental-group]').filter({ hasText: 'News' });
+      await news.click();
+      await expect(news.locator('.lock-badge.is-locked')).toBeVisible();
+    },
+  },
+  {
+    name: 'parental-options',
+    budget: 0,
+    go: async (p) => {
+      await p.locator('[data-parental-tab="options"]').click();
+      await expect(p.locator('#parental-duration')).toBeVisible();
+    },
+  },
+  {
+    name: 'settings-parental-on',
+    budget: 0,
+    go: async (p) => {
+      await leaveParentalLocked(p);
+      await openSettingsPane(p, 'general');
+      await expect(p.locator('.parental-entry-status.is-on')).toBeVisible();
+    },
+  },
+  {
+    name: 'live-locked',
+    budget: 0,
+    go: async (p) => {
+      await enterTab(p, 'live');
+      await expect(p.locator('#view-channels .group-item .lock-badge.is-locked').first()).toBeVisible();
+      await expect(p.locator('#view-channels .channel-item .lock-badge.is-locked').first()).toBeVisible();
+    },
+  },
+  {
+    name: 'parental-pin-challenge',
+    budget: 0,
+    go: async (p) => {
+      await p.locator('#view-channels .channel-main .channel-item').filter({ hasText: 'Channel One' }).click();
+      await expect(p.locator('.parental-pin-prompt .parental-pin-dialog')).toBeVisible();
+    },
+  },
+  {
     // Last two: both reload with the playlist state rewritten.
     name: 'loading',
     budget: 0,
@@ -511,9 +599,18 @@ const XTREAM_SCREENS: Screen[] = [
     },
   },
   {
+    name: 'vod-menu-speed',
+    budget: 0.001,
+    go: async (p) => {
+      await p.locator('[data-menu-action="__speed_open__"]').click();
+      await expect(p.locator('#player-menu [data-playback-rate="1.5"]')).toBeVisible();
+    },
+  },
+  {
     name: 'vod-menu-subtitles',
     budget: 0.001,
     go: async (p) => {
+      await p.locator('[data-menu-action="__menu_back__"]').click();
       await p.locator('[data-menu-action="__subs_open__"]').click();
       await expect(p.locator('[data-menu-action="__subs_track__"][data-track-index="-3"]')).toBeVisible();
     },
@@ -561,6 +658,35 @@ const XTREAM_SCREENS: Screen[] = [
       await expect(p.locator('#view-movies .catalog-tile').first()).toBeVisible();
       await expect(p.locator('#view-movies .catalog-rail-title').first())
         .toHaveText('Continue Watching');
+    },
+  },
+  {
+    // The Movies kind drops the playlist column and docks the account slot.
+    name: 'parental-controls-movies',
+    budget: 0,
+    go: async (p) => {
+      // The Xtream setup has no LAN stub, and the entry sits at the top of
+      // the first pane anyway.
+      await enterTab(p, 'settings');
+      await p.locator('#manage-parental-controls').click();
+      await enterPin(p);
+      await expect(p.locator('.parental-pin-prompt h2')).toContainText('Confirm');
+      await enterPin(p);
+      const view = p.locator('#view-parental-controls');
+      await view.locator('#parental-kind [data-value="vod"]').click();
+      const category = view.locator('[data-parental-group]').filter({ hasText: 'Cat A' });
+      await category.click();
+      await expect(category.locator('.lock-badge.is-locked')).toBeVisible();
+      await expect(view.locator('[data-parental-item]').filter({ hasText: 'Movie One' })).toBeVisible();
+    },
+  },
+  {
+    name: 'movies-locked',
+    budget: 0,
+    go: async (p) => {
+      await leaveParentalLocked(p);
+      await enterTab(p, 'movies');
+      await expect(p.locator('#view-movies .catalog-tile .lock-badge.is-locked').first()).toBeVisible();
     },
   },
 ];
