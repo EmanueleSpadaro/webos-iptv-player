@@ -103,16 +103,37 @@ set interactive [expr {$mode eq "shell"}]
 set expected_disconnect 0
 if {$interactive} { set timeout 30 }
 
-if {$mode eq "push" || $mode eq "pull"} {
-  set args [list scp -P $env(TV_PORT)]
-} else {
-  set args [list ssh -p $env(TV_PORT)]
-}
-if {[string length $env(TV_KEY)] > 0} { lappend args -i $env(TV_KEY) }
-lappend args -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+set opts [list]
+if {[string length $env(TV_KEY)] > 0} { lappend opts -i $env(TV_KEY) }
+lappend opts -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   -o LogLevel=ERROR -o ControlMaster=auto -o ControlPersist=60 \
   -o ControlPath=$env(TV_CONTROL_PATH) -o HostKeyAlgorithms=+ssh-rsa \
   -o PubkeyAcceptedKeyTypes=+ssh-rsa
+
+# Authenticate silently first so prompts never reach stdout; the command
+# then reuses the control connection without prompting.
+if {!$interactive} {
+  log_user 0
+  spawn -noecho ssh -p $env(TV_PORT) {*}$opts $env(TV_HOST) true
+  expect {
+    -re {[Pp]assphrase.*:} { send "$env(TV_PASSPHRASE)\r"; exp_continue }
+    -re {[Pp]assword:} { send "$env(TV_PASSWORD)\r"; exp_continue }
+    timeout { puts stderr "tv.sh: connection timed out"; exit 1 }
+    eof {}
+  }
+  catch wait auth
+  if {[lindex $auth 3] != 0} {
+    puts stderr "tv.sh: ssh authentication failed"
+    exit [lindex $auth 3]
+  }
+  log_user 1
+}
+
+if {$mode eq "push" || $mode eq "pull"} {
+  set args [list scp -P $env(TV_PORT) {*}$opts]
+} else {
+  set args [list ssh -p $env(TV_PORT) {*}$opts]
+}
 
 switch -- $mode {
   run {
