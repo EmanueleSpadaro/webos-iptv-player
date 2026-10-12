@@ -97,6 +97,11 @@
 
 - **Desktop preview** — browser-based playback via HLS.js, mpegts.js, and Shaka
 
+## Unsupported features and limitations
+
+Some features are unavailable because of webOS platform limits or design
+choices. See the [full list](docs/unsupported-features.md).
+
 ## Supported webOS versions
 
 The app runs on **webOS 4.0 (2018) and newer**. Its baseline is the Chromium 53
@@ -293,3 +298,4 @@ some of the features above:
 - [`docs/vod-subtitles.md`](docs/vod-subtitles.md) — how VOD (Xtream movies & episodes) subtitles work: in-container tracks plus sidecar SRT/WebVTT/ASS, and online subtitle search (SubDL, OpenSubtitles, Assrt)
 - [`docs/storage-and-data.md`](docs/storage-and-data.md) — what the app stores, where it lives, and how user data is separated from disposable caches
 - [`docs/lan-service.md`](docs/lan-service.md) — phone setup and M3U uploads over the bundled LAN service
+- [`docs/unsupported-features.md`](docs/unsupported-features.md) — features that webOS does not allow or that are intentionally out of scope, with alternatives

@@ -97,6 +97,10 @@
 
 - **桌面预览** — 使用 HLS.js、mpegts.js 和 Shaka 在浏览器中预览和调试播放效果
 
+## 不支持的功能与限制
+
+部分功能受 webOS 平台限制或出于设计考虑而未提供，详见[完整列表](docs/unsupported-features.md)。
+
 ## 支持的 webOS 版本
 
 本应用支持 **webOS 4.0（2018 年）及以上版本**，最低兼容基线为 webOS 4
@@ -294,3 +298,4 @@ mpegts.js 和 Shaka 播放相应格式的视频。
 - [`docs/vod-subtitles.md`](docs/vod-subtitles.md) — Xtream 电影与剧集的字幕实现，包括容器内字幕、外挂 SRT/WebVTT/ASS 字幕，以及 SubDL、OpenSubtitles 和 Assrt 在线搜索
 - [`docs/storage-and-data.md`](docs/storage-and-data.md) — 应用的数据存储范围与位置，以及用户数据和临时缓存的隔离方式
 - [`docs/lan-service.md`](docs/lan-service.md) — 通过内置局域网服务完成手机端设置和 M3U 文件上传
+- [`docs/unsupported-features.md`](docs/unsupported-features.md) — webOS 不允许或有意不提供的功能，以及替代方案
