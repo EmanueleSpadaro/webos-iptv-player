@@ -27,7 +27,7 @@
 
 | 播放浮层 | 字幕 |
 | --- | --- |
-| ![播放浮层](https://github.com/user-attachments/assets/1a2a3fe7-55ca-4a7c-ac05-a38c4f578e41) | ![字幕](https://github.com/user-attachments/assets/5d1fab57-1087-414b-9a20-f900589eac4a) |
+| ![播放浮层](https://github.com/user-attachments/assets/6a75885d-6464-4ae8-a4f8-35774ab20838) | ![字幕](https://github.com/user-attachments/assets/5d1fab57-1087-414b-9a20-f900589eac4a) |
 
 | 字幕搜索 | 电影 |
 | --- | --- |
@@ -39,22 +39,15 @@
 
 | 搜索 | 设置 |
 | --- | --- |
-| ![搜索](https://github.com/user-attachments/assets/8677ff38-b32d-44af-991b-ce40a7157e61) | ![设置](https://github.com/user-attachments/assets/dbb231fe-defa-480b-948f-9395c8ba0a79) |
+| ![搜索](https://github.com/user-attachments/assets/8677ff38-b32d-44af-991b-ce40a7157e61) | ![设置](https://github.com/user-attachments/assets/59b155ed-40b6-4ebd-b063-a1e8cbd4de33) |
 
 | 主题选择器 | 节目提醒 |
 | --- | --- |
 | ![主题选择器](https://github.com/user-attachments/assets/2e5ed981-c01b-48ab-a681-9a0ecd6431b8) | ![节目提醒](https://github.com/user-attachments/assets/1d9bd762-def1-4e57-82cd-52eb70834b1a) |
 
-<table>
-  <tr>
-    <th width="50%">局域网设置</th>
-    <th width="50%"></th>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://github.com/user-attachments/assets/fda1f741-bf92-45fd-b7c5-e2ed555cdc92" alt="局域网设置"></td>
-    <td width="50%"></td>
-  </tr>
-</table>
+| 家长控制 | 局域网设置 |
+| --- | --- |
+| ![家长控制](https://github.com/user-attachments/assets/7f22d1c3-97bf-4118-a19f-3699bf2779ba) | ![局域网设置](https://github.com/user-attachments/assets/a618e22f-6dae-474d-870e-13aebc22bf63) |
 
 ## 功能
 
@@ -74,6 +67,7 @@
 - **电影和剧集** — 浏览 Xtream 账号提供的视频点播（VOD）内容，并按账号分别维护“继续观看”和“稍后观看”列表
 - **视频点播自动连播队列** — 自动接续播放后续剧集或“稍后观看”中的电影，并在播放完成后将其移出列表
 - **回看与直播时移** — 播放已播出的节目；观看直播时可暂停、回退或一键返回直播点
+- **家长控制** — 使用 PIN 锁定直播分组、电影和剧集分类或单个节目，并建议锁定疑似成人内容的分组；锁定的内容可带锁显示或隐藏，并可设置何时再次要求输入 PIN
 
 **播放**
 
@@ -82,6 +76,7 @@
 - **原生 PlayReady DRM** — 在兼容的 webOS 电视上，通过 LG DRM 服务和原生硬件媒体管线播放受保护的 MPEG-DASH 频道，并从 Kodi 风格的 M3U 属性读取授权设置（[详情](docs/mpeg-dash.md)）
 - **Widevine / ClearKey DRM** — 按需加载 Shaka DASH-only 引擎，支持 Kodi 风格的授权地址、请求头和经过校验的 ClearKey 内联密钥（[详情](docs/mpeg-dash.md)）
 - **音轨与字幕轨道** — 可从播放器菜单中选择，并按频道或点播项目分别记忆。直播字幕支持 HLS 清单内的 WebVTT 和 CEA-608/708；点播字幕支持内封字幕及外挂 SRT、WebVTT、ASS。还可通过 SubDL、OpenSubtitles 和 Assrt 在线搜索，或手动输入片名；即使媒体自带字幕，在线搜索仍然可用，并支持播放期间实时调整字幕同步
+- **播放速度** — 电影和剧集可选择 0.5×–2×，适用于 MP4、MKV 等文件格式；直播、回看及 HLS/DASH 流始终以正常速度播放，因为 webOS 原生播放管线会忽略这些内容的变速请求
 - **OSD（屏幕显示）** — 显示节目名称、播放进度及码流信息，包括分辨率、HDR、帧率、编解码器和音频声道
 - **自动播放故障恢复** — 检测无法开始播放或播放卡住的流，自动重新加载临时故障；若多次恢复失败，则切换至下一个直播频道
 - **音视频重新同步**（🔄）— 长时间播放回看或点播内容后若出现音画不同步，可通过播放控制栏一键重新同步

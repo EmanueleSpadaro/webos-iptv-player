@@ -13,6 +13,8 @@
 //   settings.png       settings incl. LAN setup QR and manual pairing
 //   themes.png         Settings Appearance section with the theme picker
 //   reminder-manager.png  date-grouped upcoming reminders with removal controls
+//   parental-controls.png  lock manager — Live groups on Xtream accounts, Suggested
+//                      adult groups, and a locked group with one channel set separately
 //   setup-page.png     authorized LAN setup page for a phone or laptop
 //   player.png         playback overlays: channel switcher + action menu
 //   channel-info.png   channel info bar (the OSD) — live DVR (timeshift) view
@@ -176,6 +178,13 @@ const M3U_1 = m3u(CHANNELS.slice(0, SPLIT), true);
 const M3U_2 = m3u(CHANNELS.slice(SPLIT), false);
 // One flattened playlist for the Xtream get.php route (Live · Movies · Series shots).
 const M3U_ALL = m3u(CHANNELS, true);
+// Parental-controls shot only: two adult-named groups trigger its Suggested marker.
+const M3U_PARENTAL = m3u([
+  ...CHANNELS,
+  ...['Adult', '18+'].flatMap((group, g) => Array.from({ length: 6 }, (_, n) => ({
+    id: `ch${TOTAL + g * 6 + n}`, name: `After Dark ${g * 6 + n + 1}`, group,
+  }))),
+], true);
 
 // Fake HLS master with alternate audio + subtitle renditions, served for the played
 // channel so hls.js (the desktop preview path) exposes real tracks to the player
@@ -799,7 +808,8 @@ async function seedChannelHealth(page) {
       }
       return (h >>> 0).toString(16).padStart(8, '0');
     };
-    const request = indexedDB.open('iptv', 5);
+    // No version: open whatever schema the app already created.
+    const request = indexedDB.open('iptv');
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const db = request.result;
@@ -1058,6 +1068,41 @@ try {
     await page.waitForTimeout(400);
     await shoot(page, 'reminder-manager.png');
     console.log('  reminder-manager.png');
+    await context.close();
+  }
+
+  // 3c2) Parental controls — Live on two Xtream accounts (Live / Movies / Series
+  //      toggle, account avatar, playlist column). Two adult-named groups show
+  //      the Suggested marker and the "Lock suggested groups" row; Movies is
+  //      locked with one channel set separately.
+  {
+    const { context, page } = await newPage({ xtream: true });
+    await page.route('**/get.php**', fulfill(M3U_PARENTAL, 'application/x-mpegurl'));
+    await gotoChannels(page, base);
+    await remote(page, KEY.BLUE);
+    await page.locator('#view-settings').waitFor({ state: 'visible' });
+    await page.locator('#manage-parental-controls').click();
+    const pin = page.locator('.parental-pin-prompt .parental-pin-input');
+    await pin.waitFor({ state: 'visible' });
+    await pin.fill('1234');
+    await page.locator('.parental-pin-prompt h2', { hasText: 'Confirm' }).waitFor({ state: 'visible' });
+    await pin.fill('1234');
+    const view = page.locator('#view-parental-controls');
+    await view.waitFor({ state: 'visible' });
+    await view.locator('#parental-kind [data-value="live"].active').waitFor({ state: 'visible' });
+    await view.locator('[data-parental-suggest]').waitFor({ state: 'visible' });
+    const group = view.locator('[data-parental-group]').filter({ hasText: /^\s*Movies\b/ });
+    await group.click(); // select
+    await view.locator('.parental-column-item h3', { hasText: 'Movies' }).waitFor({ state: 'visible' });
+    await group.click(); // lock
+    await group.locator('.lock-badge.is-locked').waitFor({ state: 'visible' });
+    const items = view.locator('.parental-column-item [data-parental-item]');
+    await items.nth(1).click(); // unlock one channel separately
+    await items.nth(1).locator('.parental-exception').waitFor({ state: 'visible' });
+    await clearToasts(page);
+    await page.waitForTimeout(400);
+    await shoot(page, 'parental-controls.png');
+    console.log('  parental-controls.png');
     await context.close();
   }
 

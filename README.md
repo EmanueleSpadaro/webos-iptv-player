@@ -27,7 +27,7 @@
 
 | Playback overlays | Subtitles |
 | --- | --- |
-| ![Playback overlays](https://github.com/user-attachments/assets/1a2a3fe7-55ca-4a7c-ac05-a38c4f578e41) | ![Subtitles](https://github.com/user-attachments/assets/5d1fab57-1087-414b-9a20-f900589eac4a) |
+| ![Playback overlays](https://github.com/user-attachments/assets/6a75885d-6464-4ae8-a4f8-35774ab20838) | ![Subtitles](https://github.com/user-attachments/assets/5d1fab57-1087-414b-9a20-f900589eac4a) |
 
 | Subtitle search | Movies |
 | --- | --- |
@@ -39,22 +39,15 @@
 
 | Search | Settings |
 | --- | --- |
-| ![Search](https://github.com/user-attachments/assets/8677ff38-b32d-44af-991b-ce40a7157e61) | ![Settings](https://github.com/user-attachments/assets/dbb231fe-defa-480b-948f-9395c8ba0a79) |
+| ![Search](https://github.com/user-attachments/assets/8677ff38-b32d-44af-991b-ce40a7157e61) | ![Settings](https://github.com/user-attachments/assets/59b155ed-40b6-4ebd-b063-a1e8cbd4de33) |
 
 | Theme picker | Reminder manager |
 | --- | --- |
 | ![Theme picker](https://github.com/user-attachments/assets/2e5ed981-c01b-48ab-a681-9a0ecd6431b8) | ![Reminder manager](https://github.com/user-attachments/assets/1d9bd762-def1-4e57-82cd-52eb70834b1a) |
 
-<table>
-  <tr>
-    <th width="50%">LAN setup</th>
-    <th width="50%"></th>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://github.com/user-attachments/assets/fda1f741-bf92-45fd-b7c5-e2ed555cdc92" alt="LAN setup"></td>
-    <td width="50%"></td>
-  </tr>
-</table>
+| Parental controls | LAN setup |
+| --- | --- |
+| ![Parental controls](https://github.com/user-attachments/assets/7f22d1c3-97bf-4118-a19f-3699bf2779ba) | ![LAN setup](https://github.com/user-attachments/assets/a618e22f-6dae-474d-870e-13aebc22bf63) |
 
 ## Features
 
@@ -74,6 +67,7 @@
 - **Movies & Series** — browse an Xtream account's VOD catalogs, with Continue Watching and account-scoped Watchlist rails
 - **Automatic VOD queues** — continue through series episodes or remaining Watchlist movies, removing completed titles from the Watchlist
 - **Catch-up & Live DVR** — replay past programs, and pause / rewind / return to the live edge on live streams
+- **Parental controls** — lock Live TV groups, movie and series categories, or individual titles with a PIN, with adult groups suggested for locking; locked content can stay listed with a lock or be hidden, and you choose when the PIN is asked again
 
 **Playback**
 
@@ -82,6 +76,7 @@
 - **Native PlayReady DRM** — play protected MPEG-DASH channels on compatible webOS TVs through LG's DRM service and native hardware media pipeline, with license settings supplied by Kodi-style M3U properties ([details](docs/mpeg-dash.md))
 - **Widevine / ClearKey DRM** — load Shaka DASH-only on demand, with Kodi-style license URLs and request headers or validated inline ClearKey keys ([details](docs/mpeg-dash.md))
 - **Audio & subtitle tracks** — pick from the player menu, remembered per channel or VOD item; subtitles cover in-manifest WebVTT and CEA-608/708 (live), in-container / sidecar SRT/WebVTT/ASS (VOD), and online search (SubDL, OpenSubtitles, and Assrt) with a manual title box; online search remains available when bundled tracks exist, and subtitle timing can be adjusted live
+- **Playback speed** — choose 0.5×–2× for movies and episodes in file formats such as MP4 and MKV; live TV, catch-up, and HLS/DASH streams play at normal speed because the webOS native pipeline ignores rate changes for them
 - **On-screen display** — program title, progress, and a live stream-info readout (resolution, HDR, frame rate, codec, audio channels)
 - **Automatic playback recovery** — detect streams that fail to start or stall, reload transient failures, and advance to the next live channel when recovery is exhausted
 - **Resync A/V** (🔄) — one tap on the playback bar re-locks audio and video that drift apart during a long catch-up or on-demand stream
