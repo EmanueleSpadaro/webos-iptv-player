@@ -28,7 +28,7 @@ by-capability (what each engine can decode at all, for things the live content d
 | HDR10 / HLG | ✅ | ✅ |
 | Dolby Vision + Atmos ≤1080p (profile 5) | ✅ (badge confirmed) | ✅ (badge confirmed)
 | 4K Dolby Vision + Atmos (profile 5) | ✅ (badge confirmed) | ❌ — `MediaCapabilities` reports it unsupported (see below) |
-| Dolby Vision — dual-layer (profile 7, BL+EL) | ✅ | ❌ — MSE can't feed two coordinated layers (rare in streaming) |
+| Dolby Vision — dual-layer (profile 7, BL+EL) | ⚠️ plays as **HDR10 base layer only** — EL ignored, HDR badge, no Dolby Vision (confirmed, see below) | ❌ — MSE accepts `dvhe.07.06` but output is broken: black-frame flashes, and a pink tint on real content (confirmed via Shaka, see below) |
 | Dolby Atmos codecs | ✅ (E-AC-3 JOC, AC-4) | E-AC-3 (`ec-3`) usually ✅; AC-4 — probe `isTypeSupported('audio/mp4; codecs="ac-4"')` |
 | In-band TS captions (CEA-608/708, DVB-sub) | ✅ native subtitle compositor | ❌ — need out-of-band WebVTT via `<track>` |
 | DRM | EME (Widevine / PlayReady / ClearKey) | EME — same (encrypted HLS uses MSE/EME anyway) |
@@ -107,6 +107,39 @@ One red herring to ignore: `isTypeSupported('…"dvh1.05.06,ec-3"')` → `false`
 **muxed** buffer (which fails for the 1080p variant too), but hls.js uses separate video/audio
 SourceBuffers — so it doesn't apply.
 
+## Dolby Vision profile 7 falls back to the HDR10 base layer
+
+Profile 7 is the UHD Blu-ray dual-layer format: an HDR10-compatible base layer (BL) plus an
+enhancement layer (EL, either FEL or MEL) and the RPU. On native `<video src>` every profile 7 file
+**plays at 3840×2160 with correct colors, but the TV shows the HDR badge, never Dolby Vision** — it
+decodes the BL as plain HDR10 and drops the EL and RPU.
+
+> **✅ Confirmed on-device (webOS 10.3.1).** The profile 5 HLS master[^dv-cf] played in the same
+> `<video>` harness shows the Dolby Vision badge, so the capture distinguishes the two.
+
+| Sample (profile 7) | Container / layout | Result |
+|---|---|---|
+| FEL film remux, 60 s | MKV, single-track (BL+EL interleaved) | plays, **HDR** badge |
+| FEL test pattern, 121 s | MKV and MP4, single-track | plays, **HDR** badge |
+| FEL test pattern, 121 s | MP4, dual-track (EL in its own `dvhe` track) | plays, **HDR** badge |
+| MEL test scene, 65 s | MKV, single-track | plays, **HDR** badge |
+
+This matches LG's statement that the media player supports Dolby Vision profiles 5, 6, 8, 9, and 10
+only[^lg-dv]. Don't trust `canPlayType`/`isTypeSupported` here: both answer `probably`/`true` for
+`dvhe.07.06`, the same as for the profiles that really decode.
+
+Over MSE it is worse. The same profile 7 samples, remuxed to fragmented MP4 (keeping `dvcC`) and
+played by Shaka from a DASH manifest with `codecs="dvhe.07.06"`, load in `MEDIA_SOURCE` mode, and:
+
+| Sample (profile 7, MSE) | Result |
+|---|---|
+| FEL test pattern | **Dolby Vision** badge, but the picture keeps dropping to black frames |
+| FEL film remux | HDR badge, **pink tint** and flashing |
+
+The identical fragmented file played through native `<video src>` stays a stable HDR10 picture, so
+the breakage is in the MSE path, not the remux. Profile 7 is therefore a native-only, HDR10-only
+format on webOS; it is rare in streaming anyway (it's the UHD Blu-ray format).
+
 ## Aside: native chokes on the Apple multi-codec sample (not a real-content issue)
 
 The Apple `adv_dv_atmos` test master[^dv-apple] is a
@@ -182,3 +215,4 @@ navigator.mediaCapabilities.decodingInfo({ type:'media-source',
 [^dv-apple]: Apple advanced HLS example (Dolby Vision + Atmos) — https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_dv_atmos/main.m3u8
 [^dv-cf]: Dolby developer sample (DV Profile 5 + Atmos, 4K 59.94fps) — https://media.developer.dolby.com/DolbyVision_Atmos/profile5_HLS/master.m3u8
 [^dv-dolby]: Dolby OTT browser test kit (DV Profile 5 + Atmos, 4K 30fps) — https://ott.dolby.com/browser_test_kit/clear/p5/30/master.m3u8
+[^lg-dv]: LG webOS TV developer forum, supported Dolby Vision profiles — https://forum.webostv.developer.lge.com/t/1358
