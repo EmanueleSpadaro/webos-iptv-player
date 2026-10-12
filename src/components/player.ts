@@ -163,7 +163,9 @@ export class Player {
       getVod: () => this.vod,
     });
     this.playbackRate = new PlaybackRateController(() => this.videoEl, {
-      onFallback: () => this.onPlaybackRateFallback(),
+      onFallback: rate => this.onPlaybackRateFallback(rate),
+      onVerified: rate => log.info('Playback rate verified',
+        'event=playback.rate.verified', ...this.playbackRateFields(rate)),
     });
     this.osd = new PlayerOsd(container, {
       getSnapshot: () => this.osdSnapshot(),
@@ -1548,13 +1550,32 @@ export class Player {
     };
   }
 
-  private onPlaybackRateFallback(): void {
+  // Why a rate change failed or was dropped, so a diag report can tell a
+  // missing mediaId, a Luna error, and a pipeline that ignores the rate apart.
+  private playbackRateFields(rate?: PlaybackRate): string[] {
+    const fields = [
+      this.playbackLabel(),
+      `engine=${this.playbackRate.usesNativeRate() ? 'native' : 'html'}`,
+    ];
+    if (rate !== undefined) fields.push(`rate=${String(rate)}`);
+    const observed = this.playbackRate.lastObservedRate();
+    if (observed !== null) fields.push(`observed=${String(observed)}`);
+    const failure = this.playbackRate.lastFailure();
+    if (failure) {
+      fields.push(`stage=${failure.stage}`, `attempt=${String(failure.attempt)}`);
+      if (failure.errorCode !== null) fields.push(`errorCode=${String(failure.errorCode)}`);
+      if (failure.errorText) fields.push(`errorText=${JSON.stringify(failure.errorText)}`);
+    }
+    return fields;
+  }
+
+  private onPlaybackRateFallback(rate: PlaybackRate): void {
     if (this.playbackRate.isRejected()) {
       log.warn('Playback rate ignored by the pipeline', 'event=playback.rate.ignored',
-        this.playbackLabel());
+        ...this.playbackRateFields(rate));
     } else {
       log.warn('Playback rate reapply failed', 'event=playback.rate.lost',
-        this.playbackLabel());
+        ...this.playbackRateFields(rate));
     }
     showToast(t('player.playbackSpeedFailed'));
     this.onPlaybackStateChanged();
@@ -1567,11 +1588,11 @@ export class Player {
     const applied = result === 'applied';
     if (!applied) {
       log.warn('Playback rate change failed', 'event=playback.rate.failed',
-        this.playbackLabel(), `rate=${String(rate)}`);
+        ...this.playbackRateFields(rate));
       showToast(t('player.playbackSpeedFailed'));
     } else {
       log.info('Playback rate changed', 'event=playback.rate.changed',
-        this.playbackLabel(), `rate=${String(rate)}`);
+        ...this.playbackRateFields(rate));
     }
     return applied;
   }

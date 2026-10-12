@@ -1222,6 +1222,23 @@ describe('Player VOD mode', () => {
     expect(player.getPlaybackRateState()).toEqual({ available: true, rate: 1.5 });
   });
 
+  it('logs why a playback speed change failed', async () => {
+    const video = fakeVideo(3600);
+    Object.defineProperty(video, 'playbackRate', { get: () => 1, set: () => {} });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.init(video);
+    player.playVod(req());
+
+    await expect(player.setPlaybackRate(2)).resolves.toBe(false);
+
+    const line = warn.mock.calls
+      .map(args => args.join(' '))
+      .find(text => text.includes('event=playback.rate.failed'));
+    expect(line).toMatch(/session=\d+ load=\d+ engine=html rate=2 stage=html attempt=0/);
+    expect(line).toContain('errorText="playbackRate=1"');
+    warn.mockRestore();
+  });
+
   it('does not offer playback speed for HLS or DASH VOD', () => {
     player.init(fakeVideo(3600));
     player.playVod(req({ url: 'http://host:8080/movie/u/p/10.m3u8' }));

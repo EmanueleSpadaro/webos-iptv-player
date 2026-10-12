@@ -6,6 +6,7 @@ import type {
   LunaResponse,
 } from './luna';
 import { PlaybackRateController } from './playback-rate';
+import { CONFIG } from '../config';
 
 function video(): HTMLVideoElement {
   return { playbackRate: 1 } as HTMLVideoElement;
@@ -155,6 +156,29 @@ describe('PlaybackRateController', () => {
       expect(onFallback).toHaveBeenCalledTimes(1);
       expect(controller.currentRate()).toBe(1);
       expect(controller.isRejected()).toBe(true);
+    });
+
+    it('reports the lost rate and the measured rate when ignored', async () => {
+      const { controller, onFallback } = await apply(playing(1), 2);
+
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(onFallback).toHaveBeenCalledWith(2);
+      expect(controller.lastObservedRate()).toBe(1);
+    });
+
+    it('reports the measured rate when playback follows it', async () => {
+      const el = playing(1.97);
+      const onVerified = vi.fn();
+      const controller = new PlaybackRateController(
+        () => el,
+        { isWebOS: true, requestLuna: succeed, onVerified },
+      );
+      void controller.setRate(2);
+      await vi.advanceTimersByTimeAsync(3500);
+
+      expect(onVerified).toHaveBeenCalledWith(2, 1.97);
+      expect(controller.lastObservedRate()).toBe(1.97);
     });
 
     it('also catches a slow-down that does not take effect', async () => {
@@ -313,6 +337,33 @@ describe('PlaybackRateController', () => {
 
       await expect(first).resolves.toBe('superseded');
       await expect(second).resolves.toBe('applied');
+      expect(controller.lastFailure()).toBeNull();
+    });
+
+    it.each([0, 1, 2])('ignores a late failure from superseded native attempt %i', async attempt => {
+      const el = Object.assign(video(), { mediaId: 'media1' });
+      let pending: LunaRequestOptions | undefined;
+      let calls = 0;
+      const controller = new PlaybackRateController(() => el, {
+        isWebOS: true,
+        requestLuna: (_uri, options = {}) => {
+          if (options.parameters?.playRate === 1.5 && calls++ === attempt) pending = options;
+          else options.onSuccess?.({ returnValue: true });
+          return { cancel: vi.fn() };
+        },
+      });
+      const first = controller.setRate(1.5);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(pending).toBeDefined();
+
+      const second = controller.setRate(2);
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(second).resolves.toBe('applied');
+
+      pending?.onFailure?.({ returnValue: false, errorCode: -7, errorText: 'e1' });
+      await expect(first).resolves.toBe('superseded');
+      expect(controller.currentRate()).toBe(2);
+      expect(controller.lastFailure()).toBeNull();
     });
 
     it('signals a fallback when reapplying after a pipeline event fails', async () => {
@@ -334,6 +385,99 @@ describe('PlaybackRateController', () => {
       expect(onFallback).toHaveBeenCalledTimes(1);
       expect(controller.currentRate()).toBe(1);
       expect(controller.isRejected()).toBe(false);
+    });
+  });
+
+  describe('failure diagnostics', () => {
+    it('records the Luna error of a rejected request', async () => {
+      const el = Object.assign(video(), { mediaId: 'media1' });
+      const controller = new PlaybackRateController(() => el, {
+        isWebOS: true,
+        requestLuna: (_uri, options = {}) => {
+          options.onFailure?.({ returnValue: false, errorCode: -7, errorText: 'e1' });
+          return { cancel: vi.fn() };
+        },
+      });
+
+      await expect(controller.setRate(1.5)).resolves.toBe('failed');
+      expect(controller.lastFailure()).toEqual({
+        stage: 'luna', attempt: 0, errorCode: -7, errorText: 'e1',
+      });
+    });
+
+    it('records which reassertion failed', async () => {
+      const el = Object.assign(video(), { mediaId: 'media1' });
+      let calls = 0;
+      const controller = new PlaybackRateController(() => el, {
+        isWebOS: true,
+        requestLuna: (_uri, options = {}) => {
+          if (++calls === 3) options.onFailure?.({ returnValue: false });
+          else options.onSuccess?.({ returnValue: true });
+          return { cancel: vi.fn() };
+        },
+      });
+
+      const result = controller.setRate(2);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(result).resolves.toBe('failed');
+      expect(controller.lastFailure()).toMatchObject({ stage: 'luna', attempt: 2 });
+    });
+
+    it('records a Luna request that never answers', async () => {
+      const el = Object.assign(video(), { mediaId: 'media1' });
+      const controller = new PlaybackRateController(() => el, {
+        isWebOS: true,
+        requestLuna: () => ({ cancel: vi.fn() }),
+      });
+
+      const result = controller.setRate(2);
+      await vi.advanceTimersByTimeAsync(CONFIG.PLAYER.PLAYBACK_RATE_LUNA_TIMEOUT);
+
+      await expect(result).resolves.toBe('failed');
+      expect(controller.lastFailure()).toMatchObject({ stage: 'luna-timeout', attempt: 0 });
+    });
+
+    it('records a media element that never gets a mediaId', async () => {
+      const el = video();
+      const requestLuna = vi.fn();
+      const controller = new PlaybackRateController(
+        () => el,
+        { isWebOS: true, requestLuna },
+      );
+
+      const result = controller.setRate(2);
+      await vi.advanceTimersByTimeAsync(CONFIG.PLAYER.PLAYBACK_RATE_MEDIA_TIMEOUT + 500);
+
+      await expect(result).resolves.toBe('failed');
+      expect(requestLuna).not.toHaveBeenCalled();
+      expect(controller.lastFailure()).toMatchObject({ stage: 'media-id', attempt: 0 });
+    });
+
+    it('records a rate the element refuses outside webOS', async () => {
+      const el = { get playbackRate() { return 1; }, set playbackRate(_: number) {} };
+      const controller = new PlaybackRateController(
+        () => el as HTMLVideoElement,
+        { isWebOS: false },
+      );
+
+      await expect(controller.setRate(2)).resolves.toBe('failed');
+      expect(controller.lastFailure()).toMatchObject({
+        stage: 'html', errorText: 'playbackRate=1',
+      });
+    });
+
+    it('clears the failure when the next video starts', async () => {
+      const el = { get playbackRate() { return 1; }, set playbackRate(_: number) {} };
+      const controller = new PlaybackRateController(
+        () => el as HTMLVideoElement,
+        { isWebOS: false },
+      );
+      await controller.setRate(2);
+
+      controller.reset();
+
+      expect(controller.lastFailure()).toBeNull();
     });
   });
 

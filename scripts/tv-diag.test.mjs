@@ -649,6 +649,84 @@ exit 23
     );
   });
 
+  it('parses and formats playback speed fields', () => {
+    const diagnostics = extractDiagnosticTimeline([
+      {
+        observedAt: '2026-01-01T00:00:00.000Z',
+        source: 'console',
+        level: 'warning',
+        text: '[Player] Playback rate change failed event=playback.rate.failed'
+          + ' session=2 load=3 engine=native rate=1.5 stage=luna attempt=1'
+          + ' errorCode=-7 errorText="e1"',
+      },
+      {
+        observedAt: '2026-01-01T00:00:01.000Z',
+        source: 'console',
+        level: 'warning',
+        text: '[Player] Playback rate ignored by the pipeline event=playback.rate.ignored'
+          + ' session=2 load=3 engine=native rate=2 observed=1.01',
+      },
+    ]);
+    expect(diagnostics[0]).toMatchObject({
+      code: 'playback.rate.failed', engine: 'native', rate: 1.5, stage: 'luna',
+      attempt: 1, errorCode: -7, observed: null,
+    });
+    expect(diagnostics[1]).toMatchObject({ rate: 2, observed: 1.01, errorCode: null });
+
+    const summary = formatDiagnosticSummary({
+      capturedAt: '2026-01-01T00:00:02.000Z',
+      app: {},
+      environment: {},
+      state: {
+        media: {
+          paused: false, readyState: 4, networkState: 2, currentTime: 9, playbackRate: 1.5,
+        },
+      },
+      playlists: [],
+      diagnostics,
+      input: [],
+      xtream: [],
+      logs: [],
+      network: [],
+    });
+    expect(summary).toContain(
+      'playback.rate.failed session=2 load=3 stage=luna attempt=1'
+        + ' engine=native rate=1.5 errorCode=-7',
+    );
+    expect(summary).toContain('playback.rate.ignored session=2 load=3'
+      + ' engine=native rate=2 observed=1.01');
+    expect(summary).toContain('Media: playing | ready=4 network=2 time=9s rate=1.5');
+  });
+
+  it('ignores diagnostic fields inside JSON-quoted error text', () => {
+    const errorText = JSON.stringify(
+      'e1 "quoted" \\ errorCode=401 observed=9 engine=html rate=0.5'
+        + ' stage=stale attempt=9 session=99 load=99',
+    );
+    const text = '[Player] event=playback.rate.failed'
+      + ` errorText=${errorText} session=2 load=3 stage=luna attempt=1 engine=native rate=2`;
+    const [event] = extractDiagnosticTimeline([{
+      observedAt: '2026-01-01T00:00:00.000Z',
+      source: 'console',
+      level: 'warning',
+      text,
+    }]);
+
+    expect(event).toMatchObject({
+      code: 'playback.rate.failed', session: 2, load: 3, stage: 'luna', attempt: 1,
+      engine: 'native', rate: 2, observed: null, errorCode: null, text,
+    });
+  });
+
+  it('does not treat an event inside quoted error text as a diagnostic event', () => {
+    expect(extractDiagnosticTimeline([{
+      observedAt: '2026-01-01T00:00:00.000Z',
+      source: 'console',
+      level: 'warning',
+      text: '[Player] errorText="event=playback.rate.failed rate=2"',
+    }])).toEqual([]);
+  });
+
   it('does not leak probe secrets into the assembled report', () => {
     const report = assembleDiagnosticReport({
       capturedAt: '2026-01-01T00:00:00.000Z',

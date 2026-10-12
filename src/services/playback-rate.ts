@@ -23,12 +23,27 @@ type RequestLuna = (
 
 export type PlaybackRateResult = 'applied' | 'failed' | 'superseded';
 
+export type PlaybackRateFailureStage =
+  'html' | 'media-id' | 'stale' | 'luna' | 'luna-timeout';
+
+// Why the last change, reassertion, or reapply failed, for diagnostics.
+export interface PlaybackRateFailure {
+  stage: PlaybackRateFailureStage;
+  // 0 is the first native request; 1..N are the follow-up reassertions.
+  attempt: number;
+  errorCode: number | null;
+  errorText: string;
+}
+
 interface PlaybackRateControllerOptions {
   isWebOS?: boolean;
   requestLuna?: RequestLuna;
   // An applied rate was lost later (reapply failed or playback ignored it).
-  onFallback?: () => void;
+  onFallback?: (rate: PlaybackRate) => void;
+  onVerified?: (rate: PlaybackRate, observed: number) => void;
 }
+
+type NativeRateResult = Pick<PlaybackRateFailure, 'stage' | 'errorCode' | 'errorText'> | null;
 
 const VERIFY_INTERRUPTS = ['waiting', 'seeking', 'pause'];
 const VERIFY_RESTARTS = ['playing', 'seeked'];
@@ -40,9 +55,12 @@ export class PlaybackRateController {
   private requestToken = 0;
   private rejected = false;
   private stopVerify: (() => void) | null = null;
+  private failure: PlaybackRateFailure | null = null;
+  private observed: number | null = null;
   private readonly isWebOS: boolean;
   private readonly requestLuna: RequestLuna;
-  private readonly onFallback: () => void;
+  private readonly onFallback: (rate: PlaybackRate) => void;
+  private readonly onVerified: (rate: PlaybackRate, observed: number) => void;
 
   constructor(
     private getVideoElement: () => HTMLVideoElement | null,
@@ -51,6 +69,20 @@ export class PlaybackRateController {
     this.isWebOS = options.isWebOS ?? isWebOS();
     this.requestLuna = options.requestLuna ?? lunaRequest;
     this.onFallback = options.onFallback ?? (() => {});
+    this.onVerified = options.onVerified ?? (() => {});
+  }
+
+  usesNativeRate(): boolean {
+    return this.isWebOS;
+  }
+
+  lastFailure(): PlaybackRateFailure | null {
+    return this.failure;
+  }
+
+  // Rate measured from currentTime by the last completed verification.
+  lastObservedRate(): number | null {
+    return this.observed;
   }
 
   currentRate(): PlaybackRate {
@@ -69,6 +101,8 @@ export class PlaybackRateController {
     this.rate = 1;
     this.target = 1;
     this.rejected = false;
+    this.failure = null;
+    this.observed = null;
     const video = this.getVideoElement();
     if (!video) return;
     video.playbackRate = 1;
@@ -79,8 +113,13 @@ export class PlaybackRateController {
     if (!this.isWebOS && this.rate === rate) return 'applied';
     const token = ++this.requestToken;
     this.stopVerify?.();
+    this.failure = null;
+    this.observed = null;
     const video = this.getVideoElement();
-    if (!video) return 'failed';
+    if (!video) {
+      this.failure = { stage: 'stale', attempt: 0, errorCode: null, errorText: '' };
+      return 'failed';
+    }
     this.target = rate;
 
     const applied = this.isWebOS
@@ -106,6 +145,7 @@ export class PlaybackRateController {
     const video = this.getVideoElement();
     const rate = this.target;
     if (!video || rate === 1) return;
+    this.observed = null;
     if (!this.isWebOS) {
       this.applyHtml(video, rate);
       return;
@@ -121,6 +161,7 @@ export class PlaybackRateController {
   }
 
   private fallBack(video: HTMLVideoElement, rejected: boolean): void {
+    const lost = this.target;
     this.requestToken++;
     this.stopVerify?.();
     this.rate = 1;
@@ -128,7 +169,7 @@ export class PlaybackRateController {
     if (rejected) this.rejected = true;
     video.playbackRate = 1;
     this.resetNative(video);
-    this.onFallback();
+    this.onFallback(lost);
   }
 
   // Best effort: an earlier native command may have taken effect before the
@@ -181,7 +222,9 @@ export class PlaybackRateController {
         return;
       }
       stop();
+      this.observed = Math.round(observed * 100) / 100;
       if (Math.abs(observed - 1) < Math.abs(observed - rate)) this.fallBack(video, true);
+      else this.onVerified(rate, this.observed);
     };
     VERIFY_INTERRUPTS.forEach(type => video.addEventListener(type, cancelSample));
     VERIFY_RESTARTS.forEach(type => video.addEventListener(type, restart));
@@ -190,12 +233,32 @@ export class PlaybackRateController {
   }
 
   private applyHtml(video: HTMLVideoElement, rate: PlaybackRate): boolean {
+    let errorText = '';
     try {
       video.playbackRate = rate;
-      return Math.abs(video.playbackRate - rate) < 0.01;
-    } catch {
-      return false;
+      if (Math.abs(video.playbackRate - rate) < 0.01) return true;
+      errorText = `playbackRate=${String(video.playbackRate)}`;
+    } catch (err) {
+      errorText = err instanceof Error ? err.message : String(err);
     }
+    this.failure = { stage: 'html', attempt: 0, errorCode: null, errorText };
+    return false;
+  }
+
+  private fail(
+    token: number,
+    stage: PlaybackRateFailureStage,
+    attempt: number,
+    result: NativeRateResult = null,
+  ): false {
+    if (token !== this.requestToken) return false;
+    this.failure = {
+      stage: result?.stage ?? stage,
+      attempt,
+      errorCode: result?.errorCode ?? null,
+      errorText: result?.errorText ?? '',
+    };
+    return false;
   }
 
   private async applyNative(
@@ -205,23 +268,25 @@ export class PlaybackRateController {
     reassert: boolean = false,
   ): Promise<boolean> {
     const mediaId = await this.waitForMediaId(video as VideoWithMediaId, token);
-    if (!mediaId || token !== this.requestToken || video !== this.getVideoElement()) {
-      return false;
+    if (token !== this.requestToken || video !== this.getVideoElement()) {
+      return this.fail(token, 'stale', 0);
     }
-    if (!await this.requestNativeRate(mediaId, rate)) return false;
+    if (!mediaId) return this.fail(token, 'media-id', 0);
+    const first = await this.requestNativeRate(mediaId, rate);
+    if (first) return this.fail(token, 'luna', 0, first);
     if (!reassert) return true;
 
-    for (let i = 0; i < CONFIG.PLAYER.PLAYBACK_RATE_REASSERT_COUNT; i++) {
+    for (let i = 1; i <= CONFIG.PLAYER.PLAYBACK_RATE_REASSERT_COUNT; i++) {
       await new Promise(resolve => {
         setTimeout(resolve, CONFIG.PLAYER.PLAYBACK_RATE_REASSERT_MS);
       });
-      const currentMediaId = (video as VideoWithMediaId).mediaId;
-      if (!currentMediaId ||
-        token !== this.requestToken ||
-        video !== this.getVideoElement() ||
-        !await this.requestNativeRate(currentMediaId, rate)) {
-        return false;
+      if (token !== this.requestToken || video !== this.getVideoElement()) {
+        return this.fail(token, 'stale', i);
       }
+      const currentMediaId = (video as VideoWithMediaId).mediaId;
+      if (!currentMediaId) return this.fail(token, 'media-id', i);
+      const next = await this.requestNativeRate(currentMediaId, rate);
+      if (next) return this.fail(token, 'luna', i, next);
     }
     return true;
   }
@@ -248,26 +313,31 @@ export class PlaybackRateController {
     });
   }
 
-  private requestNativeRate(mediaId: string, rate: PlaybackRate): Promise<boolean> {
+  // Resolves null on success, otherwise the failure detail.
+  private requestNativeRate(mediaId: string, rate: PlaybackRate): Promise<NativeRateResult> {
     return new Promise(resolve => {
       let settled = false;
       let request: LunaRequestHandle | null = null;
-      const finish = (success: boolean): void => {
+      const finish = (result: NativeRateResult): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
         request?.cancel();
-        resolve(success);
+        resolve(result);
       };
       const timeout = setTimeout(
-        () => finish(false),
+        () => finish({ stage: 'luna-timeout', errorCode: null, errorText: '' }),
         CONFIG.PLAYER.PLAYBACK_RATE_LUNA_TIMEOUT,
       );
       const options: LunaRequestOptions<LunaResponse> = {
         method: 'setPlayRate',
         parameters: { mediaId, playRate: rate, audioOutput: true },
-        onSuccess: () => finish(true),
-        onFailure: () => finish(false),
+        onSuccess: () => finish(null),
+        onFailure: response => finish({
+          stage: 'luna',
+          errorCode: typeof response?.errorCode === 'number' ? response.errorCode : null,
+          errorText: typeof response?.errorText === 'string' ? response.errorText : '',
+        }),
       };
       request = this.requestLuna('luna://com.webos.media', options);
       if (settled) request.cancel();

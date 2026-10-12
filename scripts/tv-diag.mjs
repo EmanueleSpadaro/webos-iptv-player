@@ -291,46 +291,52 @@ export function normalizeNetworkRecords(events, redactor) {
 export function extractDiagnosticTimeline(logs) {
   const timeline = [];
   for (const entry of logs) {
-    const code = entry.text.match(/\bevent=([a-z0-9_.-]+)/i)?.[1];
+    // JSON-quoted messages are evidence, not structured diagnostic fields.
+    const fields = entry.text.replace(/"(?:\\[\s\S]|[^"\\])*(?:"|$)/g, ' ');
+    const code = fields.match(/\bevent=([a-z0-9_.-]+)/i)?.[1];
     if (!code) continue;
     // Input events get their own timeline: one line per press would bury the
     // playback/EPG events this list exists for.
     if (code.startsWith('key.')) continue;
-    const session = Number(entry.text.match(/\bsession=(\d+)/)?.[1] ?? NaN);
-    const load = Number(entry.text.match(/\bload=(\d+)/)?.[1] ?? NaN);
-    const count = Number(entry.text.match(/\bcount=(\d+)/)?.[1] ?? NaN);
-    const channels = Number(entry.text.match(/\bchannels=(\d+)/)?.[1] ?? NaN);
-    const failed = Number(entry.text.match(/\bfailed=(\d+)/)?.[1] ?? NaN);
-    const source = entry.text.match(/\bsource=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const generation = Number(entry.text.match(/\bgeneration=(\d+)/)?.[1] ?? NaN);
-    const active = Number(entry.text.match(/\bactive=(\d+)/)?.[1] ?? NaN);
-    const reason = entry.text.match(/\breason=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const task = entry.text.match(/\btask=([a-z0-9_.-]+)/i)?.[1] ?? '';
-    const stage = entry.text.match(/\bstage=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const transport = entry.text.match(/\btransport=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const filter = entry.text.match(/\bfilter=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const encoding = entry.text.match(/\bencoding=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const pass = entry.text.match(/\bpass=([a-z0-9_-]+)/i)?.[1] ?? '';
-    const attempt = Number(entry.text.match(/\battempt=(\d+)/)?.[1] ?? NaN);
-    const attempts = Number(entry.text.match(/\battempts=(\d+)/)?.[1] ?? NaN);
-    const available = Number(entry.text.match(/\bavailable=([01])/)?.[1] ?? NaN);
-    const items = Number(entry.text.match(/\bitems=(\d+)/)?.[1] ?? NaN);
-    const bytes = Number(entry.text.match(/\bbytes=(\d+)/)?.[1] ?? NaN);
-    const chunks = Number(entry.text.match(/\bchunks=(\d+)/)?.[1] ?? NaN);
-    const kept = Number(entry.text.match(/\bkept=(\d+)/)?.[1] ?? NaN);
-    const emitted = Number(entry.text.match(/\bemitted=(\d+)/)?.[1] ?? NaN);
-    const added = Number(entry.text.match(/\badded=(\d+)/)?.[1] ?? NaN);
-    const dropped = Number(entry.text.match(/\bdropped=(\d+)/)?.[1] ?? NaN);
-    const duplicates = Number(entry.text.match(/\bduplicates=(\d+)/)?.[1] ?? NaN);
-    const batches = Number(entry.text.match(/\bbatches=(\d+)/)?.[1] ?? NaN);
-    const progress = Number(entry.text.match(/\bprogress=(\d+)/)?.[1] ?? NaN);
-    const programmes = Number(entry.text.match(/\bprogrammes=(\d+)/)?.[1] ?? NaN);
-    const streams = Number(entry.text.match(/\bstreams=(\d+)/)?.[1] ?? NaN);
-    const categories = Number(entry.text.match(/\bcategories=(\d+)/)?.[1] ?? NaN);
-    const epg = Number(entry.text.match(/\bepg=(\d+)/)?.[1] ?? NaN);
-    const elapsedMs = Number(entry.text.match(/\belapsedMs=(\d+)/)?.[1] ?? NaN);
-    const delayMs = Number(entry.text.match(/\bdelayMs=(\d+)/)?.[1] ?? NaN);
-    const timeoutMs = Number(entry.text.match(/\btimeoutMs=(\d+)/)?.[1] ?? NaN);
+    const session = Number(fields.match(/\bsession=(\d+)/)?.[1] ?? NaN);
+    const load = Number(fields.match(/\bload=(\d+)/)?.[1] ?? NaN);
+    const count = Number(fields.match(/\bcount=(\d+)/)?.[1] ?? NaN);
+    const channels = Number(fields.match(/\bchannels=(\d+)/)?.[1] ?? NaN);
+    const failed = Number(fields.match(/\bfailed=(\d+)/)?.[1] ?? NaN);
+    const source = fields.match(/\bsource=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const generation = Number(fields.match(/\bgeneration=(\d+)/)?.[1] ?? NaN);
+    const active = Number(fields.match(/\bactive=(\d+)/)?.[1] ?? NaN);
+    const reason = fields.match(/\breason=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const task = fields.match(/\btask=([a-z0-9_.-]+)/i)?.[1] ?? '';
+    const stage = fields.match(/\bstage=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const transport = fields.match(/\btransport=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const filter = fields.match(/\bfilter=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const encoding = fields.match(/\bencoding=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const pass = fields.match(/\bpass=([a-z0-9_-]+)/i)?.[1] ?? '';
+    const attempt = Number(fields.match(/\battempt=(\d+)/)?.[1] ?? NaN);
+    const attempts = Number(fields.match(/\battempts=(\d+)/)?.[1] ?? NaN);
+    const available = Number(fields.match(/\bavailable=([01])/)?.[1] ?? NaN);
+    const items = Number(fields.match(/\bitems=(\d+)/)?.[1] ?? NaN);
+    const bytes = Number(fields.match(/\bbytes=(\d+)/)?.[1] ?? NaN);
+    const chunks = Number(fields.match(/\bchunks=(\d+)/)?.[1] ?? NaN);
+    const kept = Number(fields.match(/\bkept=(\d+)/)?.[1] ?? NaN);
+    const emitted = Number(fields.match(/\bemitted=(\d+)/)?.[1] ?? NaN);
+    const added = Number(fields.match(/\badded=(\d+)/)?.[1] ?? NaN);
+    const dropped = Number(fields.match(/\bdropped=(\d+)/)?.[1] ?? NaN);
+    const duplicates = Number(fields.match(/\bduplicates=(\d+)/)?.[1] ?? NaN);
+    const batches = Number(fields.match(/\bbatches=(\d+)/)?.[1] ?? NaN);
+    const progress = Number(fields.match(/\bprogress=(\d+)/)?.[1] ?? NaN);
+    const programmes = Number(fields.match(/\bprogrammes=(\d+)/)?.[1] ?? NaN);
+    const streams = Number(fields.match(/\bstreams=(\d+)/)?.[1] ?? NaN);
+    const categories = Number(fields.match(/\bcategories=(\d+)/)?.[1] ?? NaN);
+    const epg = Number(fields.match(/\bepg=(\d+)/)?.[1] ?? NaN);
+    const elapsedMs = Number(fields.match(/\belapsedMs=(\d+)/)?.[1] ?? NaN);
+    const delayMs = Number(fields.match(/\bdelayMs=(\d+)/)?.[1] ?? NaN);
+    const timeoutMs = Number(fields.match(/\btimeoutMs=(\d+)/)?.[1] ?? NaN);
+    const rate = Number(fields.match(/\brate=(\d+(?:\.\d+)?)/)?.[1] ?? NaN);
+    const observed = Number(fields.match(/\bobserved=(\d+(?:\.\d+)?)/)?.[1] ?? NaN);
+    const errorCode = Number(fields.match(/\berrorCode=(-?\d+)/)?.[1] ?? NaN);
+    const engine = fields.match(/\bengine=([a-z0-9_-]+)/i)?.[1] ?? '';
     timeline.push({
       observedAt: entry.observedAt,
       code,
@@ -369,6 +375,10 @@ export function extractDiagnosticTimeline(logs) {
       elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : null,
       delayMs: Number.isFinite(delayMs) ? delayMs : null,
       timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : null,
+      rate: Number.isFinite(rate) ? rate : null,
+      observed: Number.isFinite(observed) ? observed : null,
+      errorCode: Number.isFinite(errorCode) ? errorCode : null,
+      engine,
       level: entry.level,
       text: entry.text,
     });
@@ -566,7 +576,9 @@ export function formatDiagnosticSummary(report) {
     const media = report.state.media;
     lines.push(
       `Media: ${media.paused ? 'paused' : 'playing'} | ready=${String(media.readyState)}`
-      + ` network=${String(media.networkState)} time=${String(media.currentTime)}s`,
+      + ` network=${String(media.networkState)} time=${String(media.currentTime)}s`
+      + `${media.playbackRate != null && media.playbackRate !== 1
+        ? ` rate=${String(media.playbackRate)}` : ''}`,
     );
     for (const source of media.sources ?? []) {
       const verdict = source.canPlayType
@@ -705,6 +717,10 @@ export function formatDiagnosticSummary(report) {
     if (event.elapsedMs != null) fields.push(`elapsedMs=${String(event.elapsedMs)}`);
     if (event.delayMs != null) fields.push(`delayMs=${String(event.delayMs)}`);
     if (event.timeoutMs != null) fields.push(`timeoutMs=${String(event.timeoutMs)}`);
+    if (event.engine) fields.push(`engine=${event.engine}`);
+    if (event.rate != null) fields.push(`rate=${String(event.rate)}`);
+    if (event.observed != null) fields.push(`observed=${String(event.observed)}`);
+    if (event.errorCode != null) fields.push(`errorCode=${String(event.errorCode)}`);
     lines.push(`- ${event.code}${fields.length ? ` ${fields.join(' ')}` : ''}`);
   }
   const input = report.input ?? [];
@@ -934,6 +950,7 @@ export const activeProbeExpression = `(${function activeProbe(
           networkState: video.networkState,
           paused: video.paused,
           currentTime: Math.round(video.currentTime * 100) / 100,
+          playbackRate: video.playbackRate,
           duration: Number.isFinite(video.duration)
             ? Math.round(video.duration * 100) / 100
             : null,
@@ -1001,6 +1018,7 @@ export const snapshotProbeExpression = `(${function snapshotProbe() {
         networkState: video.networkState,
         paused: video.paused,
         currentTime: Math.round(video.currentTime * 100) / 100,
+        playbackRate: video.playbackRate,
         duration: Number.isFinite(video.duration)
           ? Math.round(video.duration * 100) / 100
           : null,
