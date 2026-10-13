@@ -610,6 +610,61 @@ exit 23
     })]);
   });
 
+  it('keeps Live category filter fields in both timelines and the summary', () => {
+    const logs = [
+      {
+        observedAt: '2026-01-01T00:00:00.000Z',
+        source: 'console',
+        level: 'log',
+        text: '[Playlist] Xtream Live category filter applied'
+          + ' event=xtream.category_filter.applied load=2 mode=include'
+          + ' categories=3 kept=120 total=4000',
+      },
+      {
+        observedAt: '2026-01-01T00:00:01.000Z',
+        source: 'console',
+        level: 'log',
+        text: '[Settings] Live categories chosen event=xtream.category_filter.picked'
+          + ' mode=exclude categories=2 total=40',
+      },
+      {
+        observedAt: '2026-01-01T00:00:02.000Z',
+        source: 'console',
+        level: 'log',
+        text: '[App] Xtream Live categories announced'
+          + ' event=xtream.category_filter.announced count=5 items=2',
+      },
+    ];
+    expect(extractXtreamTimeline(logs)).toEqual([
+      expect.objectContaining({
+        event: 'xtream.category_filter.applied',
+        load: 2, mode: 'include', categories: 3, kept: 120, total: 4000,
+      }),
+      expect.objectContaining({
+        event: 'xtream.category_filter.picked', mode: 'exclude', categories: 2, total: 40,
+      }),
+      expect.objectContaining({
+        event: 'xtream.category_filter.announced', count: 5, items: 2,
+      }),
+    ]);
+    const report = assembleDiagnosticReport({
+      capturedAt: '2026-01-01T00:00:03.000Z',
+      full: false,
+      app: {},
+      logs,
+      networkEvents: [],
+    });
+    const summary = formatDiagnosticSummary(report);
+    expect(summary).toContain(
+      'xtream.category_filter.applied load=2 kept=120 mode=include categories=3 total=4000',
+    );
+    expect(summary).toContain(
+      'xtream.category_filter.applied load=2 mode=include categories=3 kept=120 total=4000',
+    );
+    expect(summary).toContain('xtream.category_filter.picked mode=exclude categories=2 total=40');
+    expect(summary).toContain('xtream.category_filter.announced count=5 items=2');
+  });
+
   it('formats parser, worker, catalog, and cache lifecycle fields', () => {
     const diagnostics = extractDiagnosticTimeline([
       {

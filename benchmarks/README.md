@@ -48,9 +48,11 @@ npm run benchmark
 
 `BENCHMARK_LARGE_PLAYLIST_CHUNK_DELAY_MS` optionally paces each 64 KiB chunk.
 The desktop run uses a separate browser context; the TV runner serves the same
-fixture over LAN. `memory.largePlaylist.readyMs` is regression-gated, while its
-RSS and heap measurements remain informational because allocator and process
-lifetime effects vary between runs.
+fixture over LAN. The phase then runs again as `memory.largePlaylistFiltered`
+with an include Live-category filter keeping 30 of the 605 categories (about
+5% of the Live streams). Both `readyMs` values are regression-gated, while
+their RSS and heap measurements remain informational because allocator and
+process lifetime effects vary between runs.
 
 ## What is measured
 
@@ -73,7 +75,7 @@ lifetime effects vary between runs.
 | Interaction transitions | Rapid wheel-to-D-pad handoff, trusted Magic Remote-style pointer activation, connected focus, EPG channel/date changes, and non-empty virtual windows |
 | Frame/long tasks | Action-to-next-frame distributions, frames over 50ms, and Long Tasks observed during the suites |
 | Stress watchdog | Maximum event-loop heartbeat gap and explicit post-interaction document liveness |
-| Memory | Used/total V8 heap, three post-GC reopen cycles, and baseline/peak/retained renderer RSS plus page heap while streaming the large Xtream playlist |
+| Memory | Used/total V8 heap, three post-GC reopen cycles, and baseline/peak/retained renderer RSS plus page heap while streaming the large Xtream playlist, unfiltered and with a 5% Live-category filter |
 
 The key distributions record both synchronous main-thread handler time and
 action-to-next-frame latency. Search-open remains a synchronous handler

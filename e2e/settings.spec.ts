@@ -1,4 +1,5 @@
-import { test, expect, type Page, routePlaylist, seedPlaylist, PLAYLIST_URL, enterTab } from './helpers';
+import { test, expect, type Page, routePlaylist, seedPlaylist, PLAYLIST_URL, enterTab, readUserDataStore } from './helpers';
+import type { Locator } from '@playwright/test';
 
 // All Settings coverage: navigation, playlist save/removal, Xtream, and uploads.
 
@@ -978,6 +979,175 @@ test.describe('Settings Xtream live output', () => {
       const playlists = JSON.parse(localStorage.getItem('iptv_playlists') || '[]');
       return playlists[0]?.xtream?.liveOutput;
     })).toBe('m3u8');
+  });
+});
+
+test.describe('Settings Xtream live categories', () => {
+  const CATEGORIES = [
+    { category_id: 'c1', category_name: 'Group 1' },
+    { category_id: 'c2', category_name: 'Group 2' },
+    { category_id: 'c3', category_name: 'Group 3' },
+  ];
+  const STREAMS = [
+    { stream_id: 101, name: 'Alpha', category_id: 'c1' },
+    { stream_id: 102, name: 'Bravo', category_id: 'c2' },
+    { stream_id: 103, name: 'Charlie', category_id: 'c3' },
+  ];
+
+  async function routeAccount(page: Page, categoryCount: () => number): Promise<void> {
+    await page.route('**/get.php*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/x-mpegurl',
+      body: '#EXTM3U\n' + STREAMS.slice(0, categoryCount()).map(s =>
+        `#EXTINF:-1 group-title="Group ${s.stream_id - 100}",${s.name}\n` +
+        `http://host.example.com:8080/live/u1/p1/${s.stream_id}.ts`).join('\n'),
+    }));
+    await page.route('**/xmltv.php*', route =>
+      route.fulfill({ status: 200, contentType: 'application/xml', body: '<tv></tv>' }));
+    await page.route('**/player_api.php*', (route) => {
+      const action = new URL(route.request().url()).searchParams.get('action');
+      const body = action === 'get_live_streams'
+        ? STREAMS.slice(0, categoryCount()).map(s => ({ ...s, direct_source: '', tv_archive: 0 }))
+        : action === 'get_live_categories' ? CATEGORIES.slice(0, categoryCount()) : {};
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+  }
+
+  function seedAccount(page: Page, liveCategories?: unknown): Promise<void> {
+    return page.addInitScript((filter) => {
+      if (localStorage.getItem('iptv_playlists')) return;
+      localStorage.setItem('iptv_playlists', JSON.stringify([{
+        id: 'x1',
+        name: 'Account 1',
+        url: 'http://host.example.com:8080',
+        source: 'xtream',
+        xtream: { username: 'u1', password: 'p1', liveCategories: filter },
+      }]));
+    }, liveCategories);
+  }
+
+  const channels = (page: Page) => page.locator('.channel-main .channel-item');
+  const press = (page: Page, keyCode: number) => page.evaluate(code => document.dispatchEvent(
+    new KeyboardEvent('keydown', { keyCode: code, bubbles: true })), keyCode);
+
+  test('choosing categories in the picker narrows the channel list after Save', async ({ page }) => {
+    await routeAccount(page, () => 3);
+    await seedAccount(page);
+    await page.goto('/');
+    await expect(channels(page)).toHaveCount(3);
+
+    await enterTab(page, 'settings');
+    await page.locator('[data-settings-target="sources"]').click();
+    const button = page.locator('.xtream-card .xtream-live-categories');
+    await expect(button).toContainText('All');
+    await button.click();
+
+    const picker = page.locator('.live-category-picker');
+    await expect(picker.locator('[data-category-id]')).toHaveCount(3);
+    await picker.locator('[data-key="all:c2"]').click();
+    await expect(picker.locator('.live-category-row.favorite-selected')).toHaveCount(2);
+    await press(page, 405);
+    await expect(picker).toBeHidden();
+    await expect(button).toContainText('2 of 3');
+
+    await page.locator('#save-settings').click();
+    await expect(page.locator('#view-channels')).toBeVisible();
+    await expect(channels(page)).toHaveCount(2);
+    await expect(channels(page)).not.toContainText(['Bravo']);
+    expect(await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('iptv_playlists') || '[]')[0].xtream.liveCategories))
+      .toEqual({ mode: 'include', ids: ['c1', 'c3'] });
+  });
+
+  test('the picker switches accounts after applying the current one', async ({ page }) => {
+    await routeAccount(page, () => 3);
+    await page.addInitScript(() => {
+      if (localStorage.getItem('iptv_playlists')) return;
+      localStorage.setItem('iptv_playlists', JSON.stringify(['1', '2'].map(n => ({
+        id: `x${n}`,
+        name: `Account ${n}`,
+        url: `http://host.example.com:808${n}`,
+        source: 'xtream',
+        xtream: { username: `u${n}`, password: `p${n}` },
+      }))));
+    });
+    await page.goto('/');
+    await expect(channels(page)).toHaveCount(3);
+    await enterTab(page, 'settings');
+    await page.locator('[data-settings-target="sources"]').click();
+    await page.locator('.xtream-card[data-id="x1"] .xtream-live-categories').click();
+
+    const picker = page.locator('.live-category-picker');
+    await expect(picker.locator('[data-category-id]')).toHaveCount(3);
+    await expect(picker.locator('.live-category-account-name')).toHaveText('Account 1');
+    // The heading rule stops at the list's scrollbar.
+    const [rule, list] = await Promise.all([
+      picker.locator('.live-category-heading').boundingBox(),
+      picker.locator('.live-category-list').boundingBox(),
+    ]);
+    expect(Math.abs(rule!.x + rule!.width - (list!.x + list!.width))).toBeLessThan(1);
+
+    await picker.locator('[data-key="all:c2"]').click();
+    await picker.locator('.account-avatar').click();
+    await picker.locator('.account-menu-item[data-account-id="x2"]').click();
+    await expect(picker.locator('.live-category-account-name')).toHaveText('Account 2');
+    await expect(picker.locator('.live-category-row.favorite-selected')).toHaveCount(3);
+    await expect(page.locator('.xtream-card[data-id="x1"] .xtream-live-categories'))
+      .toContainText('2 of 3');
+
+    await press(page, 405);
+    await expect(picker).toBeHidden();
+    await expect(page.locator('.xtream-card[data-id="x2"] .xtream-live-categories'))
+      .toHaveClass(/focused/);
+  });
+
+  test('a new provider category stays hidden and is announced once', async ({ page }) => {
+    let count = 2;
+    await routeAccount(page, () => count);
+    await seedAccount(page, { mode: 'include', ids: ['c1'] });
+    // Paper Light has the weakest accent and status colors on its fills.
+    await page.addInitScript(() => localStorage.setItem('iptv_theme', JSON.stringify('paper-light')));
+    await page.goto('/');
+    await expect(channels(page)).toHaveCount(1);
+    // The first load only records the categories it saw.
+    await expect.poll(async () => (await readUserDataStore<{ knownIds: string[] }>(page, 'channel-state'))
+      .find(record => record.key === 'live-categories:x1')?.value.knownIds)
+      .toEqual(['c1', 'c2']);
+
+    count = 3;
+    await page.reload();
+    await expect(channels(page)).toHaveCount(1);
+    await expect(page.locator('.toast.visible')).toContainText('Account 1: 1 new live category', { timeout: 10000 });
+
+    await enterTab(page, 'settings');
+    await page.locator('[data-settings-target="sources"]').click();
+    const button = page.locator('.xtream-card .xtream-live-categories');
+    await expect(button.locator('.xtream-live-categories-new')).toHaveText('1 new');
+    const textColor = (locator: Locator) => locator.evaluate(el => getComputedStyle(el).color);
+    // Text contrast against the element's own fill, which the badge has.
+    const ownContrast = (locator: Locator) => locator.evaluate(el => {
+      const rgb = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+      const lum = (c: number[]) => c.map(v => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const style = getComputedStyle(el);
+      if (style.backgroundColor === 'rgba(0, 0, 0, 0)') return 0;
+      const [a, b] = [lum(rgb(style.color)), lum(rgb(style.backgroundColor))];
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    const badge = button.locator('.xtream-live-categories-new');
+    expect(await ownContrast(badge)).toBeGreaterThanOrEqual(4.5);
+    expect(await textColor(button.locator('.xtream-live-categories-value'))).toBe(await textColor(button));
+    expect(await button.locator('.xtream-live-categories-value').evaluate(el => getComputedStyle(el).opacity)).toBe('1');
+    await button.click();
+    const picker = page.locator('.live-category-picker');
+    const newRow = picker.locator('[data-key="new:c3"]');
+    await expect(newRow.locator('.live-category-new')).toBeVisible();
+    expect(await ownContrast(newRow.locator('.live-category-new'))).toBeGreaterThanOrEqual(4.5);
+    await press(page, 461);
+    await expect(picker).toBeHidden();
+    await expect(button.locator('.xtream-live-categories-new')).toHaveCount(0);
   });
 });
 

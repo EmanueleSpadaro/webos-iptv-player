@@ -7,9 +7,11 @@ cd "$SCRIPT_DIR"
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 
 info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # Check dependencies
@@ -34,7 +36,14 @@ info "Building service..."
 rm -rf build/bundled-service
 npx tsc -p bundled-service/tsconfig.json
 node scripts/service-compat-gate.mjs build/bundled-service
-node scripts/run-service-smoke.mjs
+# Node.js 0.12.2 ships only as x64, so Apple Silicon needs Rosetta; without
+# it, leave the smoke to CI rather than block packaging.
+if [ "$(uname -sm)" = "Darwin arm64" ] && ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+  warn "Rosetta is not installed; skipping the Node.js 0.12.2 service smoke (CI runs it)."
+  warn "Install it with: softwareupdate --install-rosetta --agree-to-license"
+else
+  node scripts/run-service-smoke.mjs
+fi
 cp bundled-service/package.json build/bundled-service/
 cp bundled-service/src/services.json build/bundled-service/
 cp bundled-service/src/setup/setup-page.html build/bundled-service/setup/

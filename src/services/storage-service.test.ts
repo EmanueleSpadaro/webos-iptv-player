@@ -990,3 +990,62 @@ describe('StorageService channel customization store', () => {
     expect(StorageService.getShowHiddenChannels()).toBe(true);
   });
 });
+
+describe('StorageService Live category snapshots without IndexedDB', () => {
+  const snap = { knownIds: ['c1', 'c2'], announcedIds: ['c2'], counts: { c1: 3, c2: 1 } };
+  const xtream = (id: string) => ({
+    id, name: id, url: 'http://host/a', source: 'xtream' as const,
+    xtream: { username: 'u1', password: 'p1' },
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+    StorageService.setPlaylists([]);
+  });
+
+  it('returns null for an account without a snapshot', () => {
+    expect(StorageService.getLiveCategorySnapshot('x1')).toBeNull();
+  });
+
+  it('round-trips a copy in the session fallback and ignores an empty id', () => {
+    const written = { knownIds: ['c1'], announcedIds: [], counts: { c1: 3 } };
+    StorageService.setLiveCategorySnapshot('x1', written);
+    StorageService.setLiveCategorySnapshot('', written);
+    written.knownIds.push('c9');
+    StorageService.getLiveCategorySnapshot('x1')!.knownIds.push('c8');
+    expect(StorageService.getLiveCategorySnapshot('x1')).toEqual({
+      knownIds: ['c1'], announcedIds: [], counts: { c1: 3 },
+    });
+    expect(StorageService.getLiveCategorySnapshot('')).toBeNull();
+  });
+
+  it('prunes snapshots of removed and non-Xtream accounts on setPlaylists', () => {
+    StorageService.setPlaylists([xtream('x1'), xtream('x2'), xtream('x3')]);
+    for (const id of ['x1', 'x2', 'x3']) StorageService.setLiveCategorySnapshot(id, snap);
+
+    StorageService.setPlaylists([
+      xtream('x1'),
+      { id: 'x2', name: 'x2', url: 'http://host/a', source: 'url' },
+    ]);
+
+    expect(StorageService.getLiveCategorySnapshot('x1')).toEqual(snap);
+    expect(StorageService.getLiveCategorySnapshot('x2')).toBeNull();
+    expect(StorageService.getLiveCategorySnapshot('x3')).toBeNull();
+  });
+
+  it('drops the snapshot when an account is re-pointed to another server or user', () => {
+    StorageService.setPlaylists([xtream('x1'), xtream('x2'), xtream('x3')]);
+    for (const id of ['x1', 'x2', 'x3']) StorageService.setLiveCategorySnapshot(id, snap);
+    const [a, b, c] = [xtream('x1'), xtream('x2'), xtream('x3')];
+
+    StorageService.setPlaylists([
+      { ...a, name: 'Renamed' },
+      { ...b, xtream: { ...b.xtream!, username: 'other' } },
+      { ...c, url: 'http://host/b' },
+    ]);
+
+    expect(StorageService.getLiveCategorySnapshot('x1')).toEqual(snap);
+    expect(StorageService.getLiveCategorySnapshot('x2')).toBeNull();
+    expect(StorageService.getLiveCategorySnapshot('x3')).toBeNull();
+  });
+});

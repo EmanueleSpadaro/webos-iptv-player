@@ -160,6 +160,25 @@ export interface ParsedEpg {
   tzOffsetMinutes?: number | null;
 }
 
+/** Which Xtream Live categories an account loads. `include` lists the kept
+ *  categories, so a new provider category stays out; `exclude` lists the
+ *  dropped ones, so a new category is kept. */
+export interface XtreamLiveCategoryFilter {
+  mode: 'include' | 'exclude';
+  ids: string[];
+}
+
+/** Category ids an account's user has reviewed, kept outside the playlist
+ *  entry so updating it never invalidates the parsed-playlist cache. */
+export interface XtreamLiveCategorySnapshot {
+  /** Every category id the user has seen in the picker. */
+  knownIds: string[];
+  /** New ids a toast has already announced. */
+  announcedIds: string[];
+  /** Live-channel count per category id from the latest full catalog. */
+  counts: Record<string, number>;
+}
+
 export interface PlaylistEntry {
   /** Stable identity assigned once at creation. Keys channel membership and the
    *  playlist tabs, so deleting/reordering/renaming never shifts the others and
@@ -181,6 +200,7 @@ export interface PlaylistEntry {
     username: string;
     password: string;
     liveOutput?: import('./utils/xtream-url').XtreamLiveOutputPreference;
+    liveCategories?: XtreamLiveCategoryFilter;
   };
   /** Channel count, populated for 'upload' entries by reconcile() from UploadMeta. */
   count?: number;

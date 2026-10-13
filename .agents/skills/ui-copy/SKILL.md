@@ -126,6 +126,7 @@ a new term after review, add a row here.
 | PIN re-ask timing | Ask for PIN again | 再次要求 PIN |
 | Item that differs from its group | Set separately | 单独设置 |
 | Group with some items locked | Partly locked | 部分锁定 |
+| Xtream live category filter | Live categories | 直播分类 |
 
 Rejected: 片单 (watchlist), 正在播放 for NOW, 节目单 (guide),
 全局频道 / "Global" for all channels, "programme",

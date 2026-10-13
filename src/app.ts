@@ -91,6 +91,8 @@ class App {
   private playlistRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private playlistRefreshIntervalMs: number | null | undefined;
   private playlistRefreshPromise: Promise<void> | null = null;
+  // The load confirmation toast owns the screen until loadData() settles.
+  private loadingData = false;
   private epgRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private epgRefreshIntervalMs: number | null | undefined;
   private epgChannelReloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -814,6 +816,7 @@ class App {
       this.channelList.render();
       this.sidebar.refresh();
       this.livePreview?.refresh();
+      this.showLiveCategoryNotices();
     } catch (err) {
       log.error('Automatic playlist refresh failed:', err);
     }
@@ -821,6 +824,7 @@ class App {
 
   private async loadData(forceEpgRefresh = false): Promise<void> {
     const done = log.time('loadData');
+    this.loadingData = true;
     show(this.views.loading);
     this.stopEpgRefresh();
     this.stopPlaylistRefresh();
@@ -889,6 +893,8 @@ class App {
       this.channelList.render();
 
       showToast(tp('app.channelsLoaded', PlaylistService.channels.length));
+      // Let the load confirmation finish before a new-category notice replaces it.
+      setTimeout(() => this.showLiveCategoryNotices(), 3000);
 
       this.scanReminders();
       ReminderService.reschedulePending();
@@ -939,9 +945,24 @@ class App {
       this.settings.render();
       showToast(t('app.loadFailed'));
     } finally {
+      this.loadingData = false;
       hide(this.views.loading);
       done();
     }
+  }
+
+  // New Live categories are announced only over the channel list, never over
+  // fullscreen playback; otherwise they wait for the next visit.
+  private showLiveCategoryNotices(): void {
+    if (this.loadingData || !this.isCurrentView('channels')
+      || !PlaylistService.hasLiveCategoryNotices()) return;
+    const notices = PlaylistService.takeLiveCategoryNotices();
+    const messages = notices.map(notice =>
+      tp('liveCategories.newToast', notice.count, { name: notice.accountName }));
+    log.info('Xtream Live categories announced', 'event=xtream.category_filter.announced',
+      `count=${String(notices.reduce((sum, notice) => sum + notice.count, 0))}`,
+      `items=${String(notices.length)}`);
+    showToast(messages.join(' '), 3000 * messages.length);
   }
 
   private isCurrentView(name: ViewName): boolean {
@@ -1003,6 +1024,7 @@ class App {
     // search box is open — it overlays other views but stays "Search".
     if (section && !this.tabBar.searchOpen) this.tabBar.setActive(section);
     this.livePreview?.refresh();
+    if (name === 'channels') this.showLiveCategoryNotices();
   }
 
   // Map a tab-bar section to its view and show it (Live = the channels view).

@@ -238,4 +238,55 @@ describe('StorageService IndexedDB migration', () => {
     expect((await loadUserRecords<ParentalControlConfig>('parental-control'))[0]?.value)
       .toEqual(config(true));
   });
+  it('persists Live category snapshots and prunes them with their accounts', async () => {
+    const snapshot = (id: string) => ({
+      knownIds: ['c1', id],
+      announcedIds: [id],
+      counts: { c1: 2, [id]: 1 },
+    });
+    const xtream = (id: string) => ({
+      id, name: id, url: 'http://host/a', source: 'xtream' as const,
+      xtream: { username: 'u1', password: 'p1' },
+    });
+    localStorage.clear();
+    vi.resetModules();
+    const { StorageService: Stored } = await import('./storage-service');
+    await Stored.init();
+    Stored.setPlaylists([xtream('x1'), xtream('x2'), xtream('x3')]);
+    Stored.setLiveCategorySnapshot('x1', snapshot('c2'));
+    Stored.setLiveCategorySnapshot('x2', snapshot('c3'));
+    Stored.setLiveCategorySnapshot('x3', snapshot('c4'));
+    const returned = Stored.getLiveCategorySnapshot('x1')!;
+    returned.knownIds.push('c9');
+    expect(Stored.getLiveCategorySnapshot('x1')).toEqual(snapshot('c2'));
+    await Stored.flush();
+
+    vi.resetModules();
+    const { StorageService: Relaunched } = await import('./storage-service');
+    await Relaunched.init();
+    expect(Relaunched.getLiveCategorySnapshot('x1')).toEqual(snapshot('c2'));
+    expect(Relaunched.getLiveCategorySnapshot('x2')).toEqual(snapshot('c3'));
+
+    // x2 is removed and x3 turns into a plain M3U source.
+    Relaunched.setPlaylists([
+      xtream('x1'),
+      { id: 'x3', name: 'x3', url: 'http://host/a', source: 'url' },
+    ]);
+    expect(Relaunched.getLiveCategorySnapshot('x1')).toEqual(snapshot('c2'));
+    expect(Relaunched.getLiveCategorySnapshot('x2')).toBeNull();
+    expect(Relaunched.getLiveCategorySnapshot('x3')).toBeNull();
+    await Relaunched.flush();
+
+    const keys = (await loadUserRecords('channel-state'))
+      .map(item => item.key)
+      .filter(key => key.startsWith('live-categories:'));
+    expect(keys).toEqual(['live-categories:x1']);
+
+    vi.resetModules();
+    const { StorageService: Pruned } = await import('./storage-service');
+    await Pruned.init();
+    expect(Pruned.getLiveCategorySnapshot('x1')).toEqual(snapshot('c2'));
+    expect(Pruned.getLiveCategorySnapshot('x2')).toBeNull();
+    await Pruned.clearUserData();
+  });
 });

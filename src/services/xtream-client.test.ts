@@ -148,6 +148,7 @@ describe('XtreamClient live archive metadata', () => {
         icon: 'http://host/a.png',
         epgChannelId: 'epg-1',
         categoryId: '2',
+        categoryIds: ['2'],
         directSource: 'http://host/direct/10',
         archive: true,
         archiveDurationDays: 7,
@@ -158,6 +159,7 @@ describe('XtreamClient live archive metadata', () => {
         icon: '',
         epgChannelId: '',
         categoryId: '',
+        categoryIds: [],
         directSource: '',
         archive: false,
         archiveDurationDays: 0,
@@ -169,6 +171,16 @@ describe('XtreamClient live archive metadata', () => {
       expect.any(Number),
       undefined,
     );
+  });
+
+  it('merges category_ids with category_id for multi-category streams', async () => {
+    fetchTextMock.mockResolvedValue(JSON.stringify([
+      { stream_id: 1, category_id: '3', category_ids: [3, 4, '', 4] },
+      { stream_id: 2, category_ids: [5] },
+      { stream_id: 3, category_id: '6', category_ids: 'bad' },
+    ]));
+    const streams = await createXtreamClient(creds).getLiveStreams();
+    expect(streams.map(stream => stream.categoryIds)).toEqual([['3', '4'], ['5'], ['6']]);
   });
 
   it('reads the provider timezone and derives its fixed-offset fallback', async () => {

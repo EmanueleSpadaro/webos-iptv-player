@@ -50,6 +50,8 @@ export interface XtreamLiveStream {
   icon: string;
   epgChannelId: string;
   categoryId: string;
+  /** `category_id` plus any extra ids from a panel's `category_ids` array. */
+  categoryIds: string[];
   directSource: string;
   archive: boolean;
   archiveDurationDays: number;
@@ -182,6 +184,17 @@ function asArray(v: unknown): Record<string, unknown>[] {
     : [];
 }
 
+function liveCategoryIds(stream: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const add = (value: unknown): void => {
+    const id = toStr(value);
+    if (id && ids.indexOf(id) < 0) ids.push(id);
+  };
+  add(stream.category_id);
+  if (Array.isArray(stream.category_ids)) stream.category_ids.forEach(add);
+  return ids;
+}
+
 function parseLiveStreams(value: unknown): XtreamLiveStream[] {
   return asArray(value)
     .map((stream) => ({
@@ -190,6 +203,7 @@ function parseLiveStreams(value: unknown): XtreamLiveStream[] {
       icon: toStr(stream.stream_icon),
       epgChannelId: toStr(stream.epg_channel_id),
       categoryId: toStr(stream.category_id),
+      categoryIds: liveCategoryIds(stream),
       directSource: toStr(stream.direct_source),
       archive: stream.tv_archive === 1 || stream.tv_archive === '1'
         || stream.tv_archive === true,

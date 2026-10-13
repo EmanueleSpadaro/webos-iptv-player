@@ -1183,3 +1183,28 @@
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 3px var(--accent-glow), 0 0 16px var(--accent-glow);
 }
+
+/* The Live categories card button: the summary keeps the button's own text
+   color. The new badge is a filled --success pill with near-black text, which
+   reads at 5.6:1 or better in every theme; on the focused button (white text
+   on --accent-dim) a white border separates it from the fill. */
+.xtream-live-categories-value {
+  margin-left: 12px;
+}
+
+.xtream-live-categories-new {
+  margin-left: 12px;
+  padding: 2px 10px;
+  border: 1px solid var(--success);
+  border-radius: 999px;
+  color: #111;
+  background: var(--success);
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.xtream-live-categories.focused .xtream-live-categories-new {
+  border-color: white;
+}

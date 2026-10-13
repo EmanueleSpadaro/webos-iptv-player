@@ -25,6 +25,9 @@ import {
   installM3USearchFixture,
   measureHostedXMLTVPipelineComparison,
   startLargePlaylistBenchmarkServer,
+  largePlaylistCategoryFilter,
+  largePlaylistFilteredChannels,
+  LARGE_PLAYLIST_CATEGORIES,
   installLargePlaylistSource,
   waitForLargePlaylistChannelCount,
   readLargePlaylistChannelCount,
@@ -393,7 +396,7 @@ async function verifyInstalledBuild(client) {
   };
 }
 
-async function runLargePlaylistMemory(client) {
+async function runLargePlaylistMemory(client, liveCategories) {
   const server = await startLargePlaylistBenchmarkServer({
     ...LARGE_PLAYLIST,
     deviceIp: resolveConfiguredDeviceIp(),
@@ -426,6 +429,7 @@ async function runLargePlaylistMemory(client) {
         username: 'u',
         password: 'p',
         liveOutput: 'ts',
+        ...(liveCategories ? { liveCategories } : {}),
       },
     });
 
@@ -454,7 +458,9 @@ async function runLargePlaylistMemory(client) {
         client,
         waitForLargePlaylistChannelCount,
         {
-          expected: LARGE_PLAYLIST.expectedChannels,
+          expected: liveCategories
+            ? largePlaylistFilteredChannels(LARGE_PLAYLIST.liveEntries, liveCategories)
+            : LARGE_PLAYLIST.expectedChannels,
           timeoutMs: LARGE_PLAYLIST.timeoutMs,
         },
       );
@@ -475,6 +481,7 @@ async function runLargePlaylistMemory(client) {
     return {
       totalEntries: LARGE_PLAYLIST.totalEntries,
       liveEntries: LARGE_PLAYLIST.liveEntries,
+      keptCategories: liveCategories?.ids.length ?? LARGE_PLAYLIST_CATEGORIES,
       playlistBytes: LARGE_PLAYLIST.playlistBytes,
       playlistMiB: mib(LARGE_PLAYLIST.playlistBytes),
       catalogBytes: server.stats.catalogBytes,
@@ -623,6 +630,10 @@ async function runTvBenchmark() {
     assertColdLoadBenchmark(coldLoad, SCALE);
     suites.coldLoad = coldLoad;
     const largePlaylist = await runLargePlaylistMemory(client);
+    const largePlaylistFiltered = await runLargePlaylistMemory(
+      client,
+      largePlaylistCategoryFilter(),
+    );
     await installParserBundle(client);
     parsers.derivedIndexes = await measureDerivedIndexBenchmark(
       { scale: SCALE },
@@ -659,6 +670,7 @@ async function runTvBenchmark() {
           retained,
           ...readRendererMemory(),
           largePlaylist,
+          largePlaylistFiltered,
         },
       },
     };

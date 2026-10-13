@@ -1,9 +1,10 @@
 import { CONFIG } from '../config';
 import { DEFAULT_THEME, DEFAULT_OVERLAY, DEFAULT_TEXT_SIZE, isValidTextSize, type OverlayStyle, type TextSize } from '../config/themes';
-import type { AudioPref, CatchupProgressEntry, Channel, ChannelCustomization, ChannelCycleMode, ManualEpgSource, ParentalControlConfig, ParentalPinThrottle, PlaylistEntry, RecentlyWatchedLiveEntry, Reminder, ResumeEntry, ResumeKind, SubtitlePref, TzMode, WatchlistEntry, WatchlistKind } from '../types';
+import type { AudioPref, CatchupProgressEntry, Channel, ChannelCustomization, ChannelCycleMode, ManualEpgSource, ParentalControlConfig, ParentalPinThrottle, PlaylistEntry, RecentlyWatchedLiveEntry, Reminder, ResumeEntry, ResumeKind, SubtitlePref, TzMode, WatchlistEntry, WatchlistKind, XtreamLiveCategorySnapshot } from '../types';
 import type { OnlineSubtitleConfig, PickedOnlineSub } from './subtitle-search/types';
 import { channelKey, legacyChannelKey } from '../utils/channel';
 import { genPlaylistId } from '../utils/playlist';
+import { normalizeXtreamBaseUrl } from '../utils/xtream-url';
 import { createLogger } from '../utils/logger';
 import { isLocalePreference, type LocalePreference } from '../i18n';
 import {
@@ -53,7 +54,12 @@ interface UserDataState {
   catchupProgress: Record<string, StoredCatchup>;
   recentlyWatchedLive: RecentlyWatchedLiveEntry[];
   parentalControl: ParentalControlConfig | null;
+  liveCategorySnapshots: Record<string, XtreamLiveCategorySnapshot>;
 }
+
+const LIVE_CATEGORY_KEY_PREFIX = 'live-categories:';
+// Without IndexedDB the snapshot is session-only; losing it is harmless.
+const fallbackLiveCategorySnapshots: Record<string, XtreamLiveCategorySnapshot> = {};
 
 let userData: UserDataState | null = null;
 let userDataInitPromise: Promise<void> | null = null;
@@ -126,6 +132,29 @@ function persistUserChanges(
   );
 }
 
+function xtreamAccountKey(pl: PlaylistEntry): string | null {
+  if (pl.source !== 'xtream' || !pl.xtream) return null;
+  return `${normalizeXtreamBaseUrl(pl.url)}|${pl.xtream.username}`;
+}
+
+// Category ids belong to one account, so a removed or re-pointed account drops them.
+function pruneLiveCategorySnapshots(previous: PlaylistEntry[], playlists: PlaylistEntry[]): void {
+  const before = new Map<string, string | null>();
+  for (const pl of previous) before.set(pl.id, xtreamAccountKey(pl));
+  const keep = new Set<string>();
+  for (const pl of playlists) {
+    const key = xtreamAccountKey(pl);
+    if (key && (!before.has(pl.id) || before.get(pl.id) === key)) keep.add(pl.id);
+  }
+  const all = userData ? userData.liveCategorySnapshots : fallbackLiveCategorySnapshots;
+  const removed = Object.keys(all).filter(id => !keep.has(id));
+  if (!removed.length) return;
+  for (const id of removed) delete all[id];
+  if (userData) {
+    persistUserChanges('channel-state', [], removed.map(id => LIVE_CATEGORY_KEY_PREFIX + id));
+  }
+}
+
 function reminderKey(item: Reminder): string {
   return `reminder:${item.channelKey}|${item.startMs}`;
 }
@@ -178,6 +207,8 @@ function allUserRecords(data: UserDataState): Parameters<typeof replaceAllUserDa
         .map(key => record(`subtitle:${key}`, data.subtitlePrefs[key])),
       ...Object.keys(data.subtitleOffsets)
         .map(key => record(`offset:${key}`, data.subtitleOffsets[key])),
+      ...Object.keys(data.liveCategorySnapshots).map(key =>
+        record(LIVE_CATEGORY_KEY_PREFIX + key, data.liveCategorySnapshots[key])),
     ],
     watchlist: Object.keys(data.watchlist).map(key => {
       const entry = data.watchlist[key];
@@ -352,6 +383,7 @@ async function loadUserDataState(): Promise<UserDataState> {
     catchupProgress: {},
     recentlyWatchedLive: recentlyWatched.map(item => item.value),
     parentalControl: parentalControl.find(item => item.key === 'config')?.value ?? null,
+    liveCategorySnapshots: {},
   };
 
   const customMeta = channelState.find(item => item.key === 'custom:meta')?.value as
@@ -368,6 +400,9 @@ async function loadUserDataState(): Promise<UserDataState> {
       data.audioPrefs[item.key.slice(6)] = item.value as AudioPref;
     } else if (item.key.startsWith('subtitle:')) {
       data.subtitlePrefs[item.key.slice(9)] = item.value as SubtitlePref;
+    } else if (item.key.startsWith(LIVE_CATEGORY_KEY_PREFIX)) {
+      data.liveCategorySnapshots[item.key.slice(LIVE_CATEGORY_KEY_PREFIX.length)] =
+        item.value as XtreamLiveCategorySnapshot;
     } else if (item.key.startsWith('offset:')) {
       data.subtitleOffsets[item.key.slice(7)] = item.value as number;
     } else if (item.key.startsWith('custom:channel:') && data.channelCustomization) {
@@ -602,9 +637,25 @@ export const StorageService = {
     const stored = set('playlists', playlists);
     if (stored) {
       evictCache();
+      pruneLiveCategorySnapshots(previous, playlists);
       onPlaylistsReplaced?.(previous, playlists);
     }
     return stored;
+  },
+
+  getLiveCategorySnapshot(playlistId: string): XtreamLiveCategorySnapshot | null {
+    const all = userData ? userData.liveCategorySnapshots : fallbackLiveCategorySnapshots;
+    return all[playlistId] ? cloneValue(all[playlistId]) : null;
+  },
+  setLiveCategorySnapshot(playlistId: string, snapshot: XtreamLiveCategorySnapshot): void {
+    if (!playlistId) return;
+    const value = cloneValue(snapshot);
+    if (!userData) {
+      fallbackLiveCategorySnapshots[playlistId] = value;
+      return;
+    }
+    userData.liveCategorySnapshots[playlistId] = value;
+    persistUserChanges('channel-state', [record(LIVE_CATEGORY_KEY_PREFIX + playlistId, value)]);
   },
 
   getLiveReconnectAttempts(): number {

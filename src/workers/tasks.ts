@@ -7,12 +7,14 @@ import type {
 } from '../types';
 import type { XMLTVParseStats } from '../parsers/xmltv-parser';
 import type { XtreamLiveReference } from '../utils/xtream-live-match';
+import type { XtreamGroupNameFilter } from '../utils/xtream-category-filter';
 
 export interface M3UWorkerRequest {
   url: string;
   timeout: number;
   xtreamLive?: XtreamLiveReference[];
   xtreamBaseUrl?: string;
+  xtreamGroupFilter?: XtreamGroupNameFilter;
 }
 
 export interface M3UWorkerResponse {

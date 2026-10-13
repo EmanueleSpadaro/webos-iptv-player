@@ -1,4 +1,4 @@
-import type { Action, ChannelCycleMode, EpgSource, ManualEpgSource, NavDirection, PlaylistEntry, TzMode } from '../types';
+import type { Action, ChannelCycleMode, EpgSource, ManualEpgSource, NavDirection, PlaylistEntry, TzMode, XtreamLiveCategoryFilter, XtreamLiveCategorySnapshot } from '../types';
 import { $, $$, html, raw, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { SpatialNav } from '../navigation/spatial-nav';
@@ -26,6 +26,8 @@ import {
   type ChannelHealthProgress,
 } from '../services/channel-health';
 import { createXtreamClient } from '../services/xtream-client';
+import { newLiveCategoryIds, normalizeLiveCategoryFilter } from '../utils/xtream-category-filter';
+import { LiveCategoryPicker } from './live-category-picker';
 import { normalizeXtreamBaseUrl, normalizeXtreamLiveOutputPreference } from '../utils/xtream-url';
 import { genPlaylistId, isSourceEnabled } from '../utils/playlist';
 import { channelKey, legacyChannelKey } from '../utils/channel';
@@ -325,6 +327,31 @@ function withEnabledState(entry: PlaylistEntry, enabled: boolean): PlaylistEntry
   return copy;
 }
 
+/** The card button's summary: "All", "{kept} of {total}" when the catalog
+ *  size is known, and a badge for categories the user has not reviewed. */
+export function liveCategoriesButtonContent(
+  filter: XtreamLiveCategoryFilter | undefined,
+  snapshot: XtreamLiveCategorySnapshot | null,
+  catalogIds?: readonly string[],
+): Safe {
+  const ids = catalogIds ?? (snapshot ? Object.keys(snapshot.counts) : []);
+  let value = '';
+  if (!filter) {
+    value = t('liveCategories.all');
+  } else if (ids.length) {
+    const listed = new Set(filter.ids);
+    const matched = ids.filter(id => listed.has(id)).length;
+    value = t('liveCategories.summary', {
+      count: filter.mode === 'include' ? matched : ids.length - matched,
+      total: ids.length,
+    });
+  }
+  const fresh = newLiveCategoryIds(filter, snapshot, snapshot ? Object.keys(snapshot.counts) : []).length;
+  return html`<span>${t('liveCategories.title')}</span>${value
+    ? html`<span class="xtream-live-categories-value">${value}</span>` : ''}${fresh
+    ? html`<em class="xtream-live-categories-new">${tp('liveCategories.newBadge', fresh)}</em>` : ''}`;
+}
+
 /** One editable Xtream account: its fields grouped in a card
  *  keyed by the entry's stable id. Untrusted values interpolate through `html`. */
 function xtreamCard(pl: Partial<PlaylistEntry>) {
@@ -366,6 +393,10 @@ function xtreamCard(pl: Partial<PlaylistEntry>) {
       <div class="xtream-card-foot">
         ${sourceToggle(enabled)}
         <button class="btn btn-secondary check-xtream" data-focusable>${t('settings.check')}</button>
+        <button class="btn btn-secondary xtream-live-categories" data-focusable>${liveCategoriesButtonContent(
+          normalizeLiveCategoryFilter(pl.xtream?.liveCategories),
+          pl.id ? StorageService.getLiveCategorySnapshot(pl.id) : null,
+        )}</button>
         <button class="btn btn-danger remove-xtream" data-focusable>${t('common.remove')}</button>
         <div class="xtream-status"></div>
       </div>
@@ -450,6 +481,15 @@ export class Settings {
   private epgOffsets: Record<string, number> = {};
   private storedEpgOffsets: Record<string, number> = {};
   private confirmationPrompt = new ConfirmationPrompt();
+  private liveCategoryPicker = new LiveCategoryPicker();
+  // Picker results waiting for Save, per card id; `account` ties each to the
+  // server and username it was chosen for.
+  private pendingLiveCategories = new Map<string, {
+    filter: XtreamLiveCategoryFilter | undefined;
+    account: string;
+    catalogIds: string[];
+    reviewed: XtreamLiveCategorySnapshot;
+  }>();
   private watchlistAccount: PlaylistEntry | null = null;
   private ignoreCategoryScroll = false;
   private categoryScrollFrame: number | null = null;
@@ -551,6 +591,7 @@ export class Settings {
   }
 
   render(): void {
+    this.pendingLiveCategories.clear();
     const allPlaylists = StorageService.getPlaylists();
     const playlists = allPlaylists.filter(pl => pl.source !== 'upload' && pl.source !== 'xtream');
     const accounts = allPlaylists.filter(pl => pl.source === 'xtream');
@@ -661,6 +702,9 @@ export class Settings {
                 <button class="btn btn-primary" data-focusable id="add-xtream">${t('settings.addXtream')}</button>
                 <div class="settings-item-hint">
                   <strong>${t('settings.streamFormat')}:</strong> ${t('settings.streamFormatHint')}
+                </div>
+                <div class="settings-item-hint">
+                  <strong>${t('liveCategories.title')}:</strong> ${t('liveCategories.settingsHint')}
                 </div>
               </div>
 
@@ -1213,6 +1257,10 @@ export class Settings {
       this.confirmationPrompt.handleAction(action);
       return;
     }
+    if (this.liveCategoryPicker.visible) {
+      this.liveCategoryPicker.handleAction(action);
+      return;
+    }
 
     switch (action) {
       case 'up':
@@ -1288,6 +1336,8 @@ export class Settings {
       this.authorizeSourceRemoval(this.sourceId(el), () => this.removeXtreamEntry(el));
     } else if (el.classList.contains('check-xtream')) {
       void this.checkXtreamAccount(el);
+    } else if (el.classList.contains('xtream-live-categories')) {
+      this.openLiveCategories(el);
     } else if (el.classList.contains('source-toggle')) {
       if (el.dataset.enabled === 'true') {
         this.authorizeSourceRemoval(this.sourceId(el), () => this.toggleSource(el), true);
@@ -1610,11 +1660,13 @@ export class Settings {
     this.onChannelsChanged();
   }
 
-  get isPromptVisible(): boolean {    return this.confirmationPrompt.visible;
+  get isPromptVisible(): boolean {
+    return this.confirmationPrompt.visible || this.liveCategoryPicker.visible;
   }
 
   dismissPrompt(): void {
     this.confirmationPrompt.hide();
+    this.liveCategoryPicker.hide();
   }
 
   // Live theme preview: focusing (D-pad) or hovering (pointer) a swatch previews
@@ -2191,6 +2243,105 @@ export class Settings {
     );
   }
 
+  private cardAccount(card: HTMLElement): { url: string; username: string; password: string; key: string } {
+    const url = normalizeXtreamBaseUrl(card.querySelector<HTMLInputElement>('.xtream-url')!.value.trim());
+    const username = card.querySelector<HTMLInputElement>('.xtream-username')!.value.trim();
+    const password = card.querySelector<HTMLInputElement>('.xtream-password')!.value;
+    return { url, username, password, key: `${url}|${username}` };
+  }
+
+  private storedAccountMatches(id: string, key: string): PlaylistEntry | undefined {
+    return StorageService.getPlaylists().find(pl => pl.id === id && pl.source === 'xtream'
+      && `${normalizeXtreamBaseUrl(pl.url)}|${pl.xtream?.username ?? ''}` === key);
+  }
+
+  /** The card's filter as it stands: a picker result for the same account,
+   *  else the saved one while the server and username are unchanged. */
+  private cardLiveCategories(id: string, key: string): XtreamLiveCategoryFilter | undefined {
+    const pending = this.pendingLiveCategories.get(id);
+    if (pending && pending.account === key) return pending.filter;
+    return normalizeLiveCategoryFilter(this.storedAccountMatches(id, key)?.xtream?.liveCategories);
+  }
+
+  private openLiveCategories(btn: HTMLElement): void {
+    const card = btn.closest<HTMLElement>('.xtream-card');
+    if (!card) return;
+    const id = card.dataset.id || '';
+    const account = this.cardAccount(card);
+    if (!account.url || !account.username || !account.password) {
+      this.setXtreamStatus(id, html`${t('settings.enterCredentials')}`, 'err');
+      return;
+    }
+    const stored = this.storedAccountMatches(id, account.key);
+    const snapshot = stored ? StorageService.getLiveCategorySnapshot(id) : null;
+    const name = card.querySelector<HTMLInputElement>('.xtream-name')!.value.trim()
+      || account.url.replace(/^https?:\/\//i, '');
+    const client = createXtreamClient({
+      baseUrl: account.url,
+      username: account.username,
+      password: account.password,
+    });
+    const restoreFocus = (): void => {
+      const target = this.container.querySelector<HTMLElement>(
+        `#xtream-entries .xtream-card[data-id="${id}"] .xtream-live-categories`,
+      );
+      if (target) this.nav.focus(target);
+    };
+    this.liveCategoryPicker.open({
+      accountId: id,
+      accountName: name,
+      accounts: this.liveCategoryAccounts(),
+      onSwitch: nextId => {
+        const next = this.container.querySelector<HTMLElement>(
+          `#xtream-entries .xtream-card[data-id="${nextId}"] .xtream-live-categories`,
+        );
+        if (next) this.openLiveCategories(next);
+      },
+      filter: this.cardLiveCategories(id, account.key),
+      snapshot,
+      loadCategories: signal => client.getLiveCategories(signal),
+      onDone: (filter, categories) => {
+        const catalogIds = categories.map(category => category.id);
+        const counts: Record<string, number> = {};
+        for (const catalogId of catalogIds) {
+          if (snapshot && snapshot.counts[catalogId] !== undefined) counts[catalogId] = snapshot.counts[catalogId];
+        }
+        const reviewed: XtreamLiveCategorySnapshot = {
+          knownIds: Array.from(new Set(catalogIds)),
+          announcedIds: [],
+          counts,
+        };
+        this.pendingLiveCategories.set(id, { filter, account: account.key, catalogIds, reviewed });
+        // A re-pointed or unsaved account gets its snapshot only once Save succeeds.
+        if (stored) StorageService.setLiveCategorySnapshot(id, reviewed);
+        log.info('Live categories chosen', 'event=xtream.category_filter.picked',
+          `mode=${filter ? filter.mode : 'all'}`, `categories=${String(filter ? filter.ids.length : 0)}`,
+          `total=${String(catalogIds.length)}`);
+        const target = this.container.querySelector<HTMLElement>(
+          `#xtream-entries .xtream-card[data-id="${id}"] .xtream-live-categories`,
+        );
+        if (target) morph(target, liveCategoriesButtonContent(filter, reviewed, catalogIds));
+        restoreFocus();
+      },
+      onCancel: restoreFocus,
+    });
+  }
+
+  /** Saved or unsaved account cards whose credentials are filled in. */
+  private liveCategoryAccounts(): PlaylistEntry[] {
+    return ($$('#xtream-entries .xtream-card', this.container) as HTMLElement[])
+      .filter(card => !!card.dataset.id)
+      .map(card => ({ card, account: this.cardAccount(card) }))
+      .filter(({ account }) => account.url && account.username && account.password)
+      .map(({ card, account }) => ({
+        id: card.dataset.id!,
+        name: card.querySelector<HTMLInputElement>('.xtream-name')!.value.trim()
+          || account.url.replace(/^https?:\/\//i, ''),
+        url: account.url,
+        source: 'xtream' as const,
+      }));
+  }
+
   private setXtreamStatus(id: string, content: Safe, cls: '' | 'ok' | 'err'): void {
     const el = $(`#xtream-entries .xtream-card[data-id="${id}"] .xtream-status`, this.container);
     if (!el) return;
@@ -2223,6 +2374,7 @@ export class Settings {
     // Xtream accounts derive their get.php/xmltv.php URLs from these credentials
     // at load time; the base URL is normalized so a bare host still resolves.
     const accounts: PlaylistEntry[] = [];
+    const reviewedSnapshots: [string, XtreamLiveCategorySnapshot][] = [];
     const cards = $$('#xtream-entries .xtream-card', this.container) as HTMLElement[];
     for (const card of cards) {
       const rawUrl = card.querySelector<HTMLInputElement>('.xtream-url')!.value.trim();
@@ -2234,12 +2386,19 @@ export class Settings {
       const liveOutput = normalizeXtreamLiveOutputPreference(
         card.querySelector<HTMLElement>('.xtream-output .dropdown')!.dataset.value,
       );
+      const id = card.dataset.id || genPlaylistId();
+      const xtream: NonNullable<PlaylistEntry['xtream']> = { username, password, liveOutput };
+      const accountKey = `${base}|${username}`;
+      const liveCategories = this.cardLiveCategories(id, accountKey);
+      if (liveCategories) xtream.liveCategories = liveCategories;
+      const pendingReview = this.pendingLiveCategories.get(id);
+      if (pendingReview && pendingReview.account === accountKey) reviewedSnapshots.push([id, pendingReview.reviewed]);
       const entry: PlaylistEntry = {
-        id: card.dataset.id || genPlaylistId(),
+        id,
         name: name || base.replace(/^https?:\/\//i, ''),
         url: base,
         source: 'xtream',
-        xtream: { username, password, liveOutput },
+        xtream,
       };
       accounts.push(withEnabledState(
         entry,
@@ -2280,7 +2439,12 @@ export class Settings {
     }
 
     ReminderService.backfillSourceIds();
-    StorageService.setPlaylists(nextSources);
+    // A re-pointed account loses its old snapshot on save; keep the one its picker just reviewed.
+    if (StorageService.setPlaylists(nextSources)) {
+      for (const [reviewedId, reviewed] of reviewedSnapshots) {
+        StorageService.setLiveCategorySnapshot(reviewedId, reviewed);
+      }
+    }
 
     const previousManualEpgSources = StorageService.getManualEpgSources();
     StorageService.setManualEpgSources(manualEpgSources);
@@ -2417,6 +2581,7 @@ export class Settings {
         pl.xtream?.username,
         pl.xtream?.password,
         pl.xtream ? normalizeXtreamLiveOutputPreference(pl.xtream.liveOutput) : '',
+        pl.xtream ? normalizeLiveCategoryFilter(pl.xtream.liveCategories) ?? null : null,
       ]));
     const offsetSig = (offsets: Record<string, number>) =>
       JSON.stringify(Object.keys(offsets).sort().map(url => [url, offsets[url]]));

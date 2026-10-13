@@ -24,6 +24,8 @@ import {
   measureDerivedIndexBenchmark,
   measureStartupHoverBenchmark,
   measureLargePlaylistMemory,
+  largePlaylistCategoryFilter,
+  largePlaylistFilteredChannels,
   preparePointerBenchmark,
   rebuildBenchmarkDatabase,
   runGroupBenchmark,
@@ -36,6 +38,7 @@ import {
   runViewReopenCycle,
   summarizeRetainedMemory,
 } from './benchmark-suite.mjs';
+import type { LargePlaylistBenchmarkOptions } from './benchmark-suite.mjs';
 
 const SCALE = Number(process.env.BENCHMARK_SCALE ?? '50000');
 const KEY_SAMPLES = Number(process.env.BENCHMARK_KEY_SAMPLES ?? '30');
@@ -75,6 +78,12 @@ const LARGE_PLAYLIST = {
   timeoutMs: positiveIntegerEnv('BENCHMARK_LARGE_PLAYLIST_TIMEOUT_MS', 600_000),
   accountId: 'benchmark-large-playlist',
 };
+const LARGE_PLAYLIST_FILTER = largePlaylistCategoryFilter();
+const LARGE_PLAYLIST_FILTERED = {
+  ...LARGE_PLAYLIST,
+  liveCategories: LARGE_PLAYLIST_FILTER,
+  expectedChannels: largePlaylistFilteredChannels(LARGE_PLAYLIST_LIVE, LARGE_PLAYLIST_FILTER),
+};
 const LARGE_PLAYLIST_ONLY = process.env.BENCHMARK_LARGE_PLAYLIST_ONLY === '1';
 
 test('records 50,000-item application benchmarks', async ({
@@ -84,8 +93,10 @@ test('records 50,000-item application benchmarks', async ({
 }) => {
   test.skip(browserName !== 'chromium', 'The benchmark uses Chromium heap metrics');
   if (LARGE_PLAYLIST_ONLY) {
-    const result = await runDesktopLargePlaylistBenchmark(browser);
+    const result = await runDesktopLargePlaylistBenchmark(browser, LARGE_PLAYLIST);
     console.log(`Large playlist benchmark result: ${JSON.stringify(result)}`);
+    const filtered = await runDesktopLargePlaylistBenchmark(browser, LARGE_PLAYLIST_FILTERED);
+    console.log(`Filtered large playlist benchmark result: ${JSON.stringify(filtered)}`);
     return;
   }
   await page.route('**/benchmark-seed.html', (route) => route.fulfill({
@@ -242,7 +253,11 @@ test('records 50,000-item application benchmarks', async ({
     };
     assertColdLoadBenchmark(coldLoad, SCALE);
     suites.coldLoad = coldLoad;
-    const largePlaylist = await runDesktopLargePlaylistBenchmark(browser);
+    const largePlaylist = await runDesktopLargePlaylistBenchmark(browser, LARGE_PLAYLIST);
+    const largePlaylistFiltered = await runDesktopLargePlaylistBenchmark(
+      browser,
+      LARGE_PLAYLIST_FILTERED,
+    );
     await page.addScriptTag({
       content: await readFile('test-output/benchmarks/parser-bundle.js', 'utf8'),
     });
@@ -276,6 +291,7 @@ test('records 50,000-item application benchmarks', async ({
           totalHeapMiB: Math.round(heap.totalSize / 1_048_576 * 10) / 10,
           retained,
           largePlaylist,
+          largePlaylistFiltered,
         },
       },
     };
@@ -314,7 +330,10 @@ async function runDesktopParentalBenchmark(page: Page) {
   return report;
 }
 
-async function runDesktopLargePlaylistBenchmark(browser: Browser) {
+async function runDesktopLargePlaylistBenchmark(
+  browser: Browser,
+  options: LargePlaylistBenchmarkOptions,
+) {
   const context = await browser.newContext({
     baseURL: 'http://localhost:3000',
     viewport: { width: 1920, height: 1080 },
@@ -323,7 +342,7 @@ async function runDesktopLargePlaylistBenchmark(browser: Browser) {
     const page = await context.newPage();
     const browserCdp = await browser.newBrowserCDPSession();
     const pageCdp = await context.newCDPSession(page);
-    return await measureLargePlaylistMemory(LARGE_PLAYLIST, {
+    return await measureLargePlaylistMemory(options, {
       page,
       browserCdp,
       pageCdp,

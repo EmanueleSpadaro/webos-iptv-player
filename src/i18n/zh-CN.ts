@@ -461,4 +461,22 @@ export const ZH_CN_MESSAGES = {
   'date.monthDay': '{month}月{day}日',
   'duration.hoursMinutes': '{hours}小时{minutes}分钟',
   'duration.minutes': '{minutes}分钟',
+  'liveCategories.title': '直播分类',
+  'liveCategories.all': '全部',
+  'liveCategories.summary': '{count}/{total}',
+  'liveCategories.newBadge': {
+    other: '新增 {count}',
+  },
+  'liveCategories.newTag': '新',
+  'liveCategories.autoShowNew': '自动显示新分类',
+  'liveCategories.autoShowNewHint': '关闭后，新分类需选中才会显示。',
+  'liveCategories.newSection': '新增分类',
+  'liveCategories.selected': '已选 {count}/{total}',
+  'liveCategories.selectOne': '请至少选择一个分类。',
+  'liveCategories.newToast': {
+    other: '{name}：新增直播分类 {count}，可在设置中查看。',
+  },
+  'liveCategories.loadError': '无法加载分类。',
+  'liveCategories.tryAgain': '重试',
+  'liveCategories.settingsHint': '只加载选中的分类。分类越少，加载越快。',
 } satisfies MessageCatalog;

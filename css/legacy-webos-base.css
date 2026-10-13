@@ -118,4 +118,6 @@
   .parental-heading > * + * { margin-left: 32px; }
   .parental-row > * + * { margin-left: 12px; }
   .parental-pin-actions > * + * { margin-left: 16px; }
+  .live-category-header > * + * { margin-left: 32px; }
+  .live-category-row > * + * { margin-left: 12px; }
 }

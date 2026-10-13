@@ -8,6 +8,7 @@ import {
   createXtreamLiveMatcher,
 } from '../utils/xtream-live-match';
 import { createLogger } from '../utils/logger';
+import { createGroupNameMatcher, type XtreamGroupNameFilter } from '../utils/xtream-category-filter';
 import { runAppWorkerTask } from '../workers/app-worker-client';
 import type {
   M3UWorkerChunk,
@@ -35,6 +36,7 @@ export async function fetchAndParseM3U(
   liveStreams?: XtreamLiveStream[],
   xtreamBaseUrl = '',
   onProgress?: (progress: M3ULoadProgress) => void,
+  groupFilter?: XtreamGroupNameFilter,
 ): Promise<M3ULoadResult> {
   const started = Date.now();
   const filter = liveStreams !== undefined
@@ -59,6 +61,7 @@ export async function fetchAndParseM3U(
         }))
       : undefined,
     ...(xtreamBaseUrl ? { xtreamBaseUrl } : {}),
+    ...(groupFilter ? { xtreamGroupFilter: groupFilter } : {}),
   };
   const channelBatches: Channel[] = [];
   const handleChunk = (chunk: M3UWorkerChunk): void => {
@@ -170,6 +173,7 @@ export async function fetchAndParseM3UInWorker(
   const liveFilters = createXtreamM3ULiveFilters(
     request.xtreamLive,
     request.xtreamBaseUrl,
+    request.xtreamGroupFilter,
   );
   let emittedChannels = 0;
   let inputBytes = 0;
@@ -318,11 +322,22 @@ interface XtreamM3ULiveFilters {
 export function createXtreamM3ULiveFilters(
   references?: XtreamLiveReference[],
   baseUrl = '',
+  groupFilter?: XtreamGroupNameFilter,
 ): XtreamM3ULiveFilters {
   let droppedChannels = 0;
   if (references === undefined) {
+    const keepGroup = groupFilter ? createGroupNameMatcher(groupFilter) : null;
     return {
       mode: baseUrl ? 'unavailable' : 'none',
+      ...(keepGroup
+        ? {
+            channelPostfilter: (channel: Channel) => {
+              if (keepGroup(channel.group)) return true;
+              droppedChannels++;
+              return false;
+            },
+          }
+        : {}),
       getDroppedCount: () => droppedChannels,
     };
   }

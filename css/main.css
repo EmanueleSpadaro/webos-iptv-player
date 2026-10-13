@@ -194,7 +194,7 @@ h3 {
 }
 
 /* Buttons */
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row) {
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row) {
   transform-origin: center;
   transition:
     transform 160ms ease,
@@ -205,8 +205,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
     color var(--transition);
 }
 
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):hover,
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row).focused {
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):hover,
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row).focused {
   transform: scale(1.03);
 }
 

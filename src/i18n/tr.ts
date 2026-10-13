@@ -461,4 +461,22 @@ export const TR_MESSAGES = {
   'date.monthDay': '{day}.{month}',
   'duration.hoursMinutes': '{hours} sa {minutes} dk',
   'duration.minutes': '{minutes} dk',
+  'liveCategories.title': 'Canlı kategoriler',
+  'liveCategories.all': 'Tümü',
+  'liveCategories.summary': '{count}/{total}',
+  'liveCategories.newBadge': {
+    other: '{count} yeni',
+  },
+  'liveCategories.newTag': 'Yeni',
+  'liveCategories.autoShowNew': 'Yeni kategorileri otomatik göster',
+  'liveCategories.autoShowNewHint': 'Kapalıyken yeni kategoriler siz seçene kadar gizli kalır.',
+  'liveCategories.newSection': 'Yeni kategoriler',
+  'liveCategories.selected': 'Seçilen: {count}/{total}',
+  'liveCategories.selectOne': 'En az bir kategori seçin.',
+  'liveCategories.newToast': {
+    other: '{name}: {count} yeni canlı kategori. Ayarlar’dan inceleyin.',
+  },
+  'liveCategories.loadError': 'Kategoriler yüklenemedi.',
+  'liveCategories.tryAgain': 'Tekrar dene',
+  'liveCategories.settingsHint': 'Yalnızca seçtiğiniz kategoriler yüklenir. Daha az kategori daha hızlı yüklenir.',
 } as const satisfies MessageCatalog;

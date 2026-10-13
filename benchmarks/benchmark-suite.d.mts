@@ -200,6 +200,20 @@ export function startTvRendererRssSampler(
   rendererHighWaterMiB: number;
 } | null>>;
 
+export const LARGE_PLAYLIST_CATEGORIES: number;
+
+export interface LargePlaylistCategoryFilter {
+  mode: 'include' | 'exclude';
+  ids: string[];
+}
+
+export function largePlaylistCategoryFilter(): LargePlaylistCategoryFilter;
+
+export function largePlaylistFilteredChannels(
+  liveEntries: number,
+  filter: LargePlaylistCategoryFilter,
+): number;
+
 export interface LargePlaylistBenchmarkOptions {
   totalEntries: number;
   liveEntries: number;
@@ -209,6 +223,7 @@ export interface LargePlaylistBenchmarkOptions {
   chunkDelayMs: number;
   accountId: string;
   expectedChannels?: number;
+  liveCategories?: LargePlaylistCategoryFilter;
   timeoutMs: number;
   deviceIp?: string;
   advertisedHost?: string;
@@ -226,6 +241,7 @@ export interface LargePlaylistBenchmarkIo {
 export interface LargePlaylistMemoryBenchmark {
   totalEntries: number;
   liveEntries: number;
+  keptCategories: number;
   playlistBytes: number;
   playlistMiB: number;
   catalogBytes: number;

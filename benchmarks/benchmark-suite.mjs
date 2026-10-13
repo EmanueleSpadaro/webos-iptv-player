@@ -1343,6 +1343,27 @@ export async function measureHostedXMLTVPipelineComparison(options, io) {
   }
 }
 
+export const LARGE_PLAYLIST_CATEGORIES = 605;
+const LARGE_PLAYLIST_KEPT_CATEGORIES = 30;
+
+// Keeps about 5% of the large playlist's Live categories, as a user trimming
+// a provider catalog down to a few countries would.
+export function largePlaylistCategoryFilter() {
+  return {
+    mode: 'include',
+    ids: Array.from({ length: LARGE_PLAYLIST_KEPT_CATEGORIES }, (_, index) => String(index)),
+  };
+}
+
+export function largePlaylistFilteredChannels(liveEntries, filter) {
+  const kept = new Set(filter.ids.map(Number));
+  let channels = 0;
+  for (let index = 0; index < liveEntries; index++) {
+    if (kept.has(index % LARGE_PLAYLIST_CATEGORIES)) channels++;
+  }
+  return channels;
+}
+
 export async function measureLargePlaylistMemory(options, io) {
   if (options.liveEntries > options.totalEntries) {
     throw new Error('Large playlist Live count cannot exceed total entries');
@@ -1374,6 +1395,7 @@ export async function measureLargePlaylistMemory(options, io) {
         username: 'u',
         password: 'p',
         liveOutput: 'ts',
+        ...(options.liveCategories ? { liveCategories: options.liveCategories } : {}),
       },
     });
 
@@ -1409,6 +1431,7 @@ export async function measureLargePlaylistMemory(options, io) {
     return {
       totalEntries: options.totalEntries,
       liveEntries: options.liveEntries,
+      keptCategories: options.liveCategories?.ids.length ?? LARGE_PLAYLIST_CATEGORIES,
       playlistBytes: options.playlistBytes,
       playlistMiB: bytesToMiB(options.playlistBytes),
       catalogBytes: server.stats.catalogBytes,
@@ -1469,7 +1492,7 @@ export async function startLargePlaylistBenchmarkServer(options) {
       }
       if (action === 'get_live_categories') {
         response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify(Array.from({ length: 605 }, (_, index) => ({
+        response.end(JSON.stringify(Array.from({ length: LARGE_PLAYLIST_CATEGORIES }, (_, index) => ({
           category_id: String(index),
           category_name: `Group ${String(index).padStart(3, '0')}`,
         }))));
@@ -1516,7 +1539,8 @@ async function streamLargeLiveCatalog(response, options, stats) {
   let batch = '[';
   let total = 0;
   for (let index = 0; index < options.liveEntries; index++) {
-    batch += `${index ? ',' : ''}{"stream_id":"${largePlaylistEntryId(index)}"}`;
+    batch += `${index ? ',' : ''}{"stream_id":"${largePlaylistEntryId(index)}",`
+      + `"category_id":"${String(index % LARGE_PLAYLIST_CATEGORIES)}"}`;
     if (batch.length >= options.chunkBytes) {
       total += Buffer.byteLength(batch);
       if (!await writeBenchmarkResponse(response, batch)) return;
@@ -1562,7 +1586,7 @@ function buildLargePlaylistRecord(index, targetBytes, origin, liveEntries) {
   const id = largePlaylistEntryId(index < liveEntries
     ? index
     : (index - liveEntries) % liveEntries);
-  const group = String(index % 605).padStart(3, '0');
+  const group = String(index % LARGE_PLAYLIST_CATEGORIES).padStart(3, '0');
   const kind = index < liveEntries
     ? 'live'
     : ['movie', 'series', 'vod'][index % 3];

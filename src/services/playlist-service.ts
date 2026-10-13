@@ -38,6 +38,14 @@ import {
 } from './xtream-client';
 import { getCachedPlaylist, playlistCacheToken, scheduleCachedPlaylist } from './idb-cache';
 import { isSourceEnabled } from '../utils/playlist';
+import {
+  filterLiveStreams,
+  liveCategoryCounts,
+  liveCategoryGroupFilter,
+  newLiveCategoryIds,
+  normalizeLiveCategoryFilter,
+  type XtreamGroupNameFilter,
+} from '../utils/xtream-category-filter';
 import { liveParentalRequest, ParentalControlService } from './parental-control';
 
 const log = createLogger('Playlist');
@@ -48,6 +56,12 @@ export interface PlaylistLoadProgress {
   inputBytes: number;
   channelsProcessed: number;
   channelsKept: number;
+}
+
+export interface LiveCategoryNotice {
+  playlistId: string;
+  accountName: string;
+  count: number;
 }
 
 interface PlaylistRefreshOptions {
@@ -124,7 +138,72 @@ class PlaylistServiceImpl {
   private searchIndexedChannelCount = -1;
   private includeHidden = false;
   private failedSourceIds = new Set<string>();
+  private liveCategoryNotices: LiveCategoryNotice[] = [];
   private refreshTimestamp: number | null = null;
+
+  hasLiveCategoryNotices(): boolean {
+    return this.currentLiveCategoryNotices().length > 0;
+  }
+
+  /** New-category notices from the latest load, each returned once. */
+  takeLiveCategoryNotices(): LiveCategoryNotice[] {
+    const notices = this.currentLiveCategoryNotices();
+    this.liveCategoryNotices = [];
+    return notices;
+  }
+
+  // A queued notice goes stale once its account is removed, disabled,
+  // re-pointed, no longer hides new categories, or has been reviewed.
+  private currentLiveCategoryNotices(): LiveCategoryNotice[] {
+    if (!this.liveCategoryNotices.length) return [];
+    const playlists = StorageService.getPlaylists();
+    this.liveCategoryNotices = this.liveCategoryNotices.filter((notice) => {
+      const pl = playlists.find(entry => entry.id === notice.playlistId);
+      if (!pl || pl.source !== 'xtream' || !isSourceEnabled(pl)) return false;
+      if (normalizeLiveCategoryFilter(pl.xtream?.liveCategories)?.mode !== 'include') return false;
+      const snapshot = StorageService.getLiveCategorySnapshot(pl.id);
+      return !!snapshot && snapshot.announcedIds.length > 0;
+    });
+    return this.liveCategoryNotices;
+  }
+
+  private recordLiveCategories(
+    pl: { id: string; name: string; url: string },
+    filter: ReturnType<typeof normalizeLiveCategoryFilter>,
+    currentIds: readonly string[],
+    nextCounts?: Record<string, number>,
+  ): void {
+    const previous = StorageService.getLiveCategorySnapshot(pl.id);
+    // The name-match fallback knows the categories but not their channels.
+    const counts = nextCounts ?? previous?.counts ?? {};
+    // A missing snapshot (first load, or lost data) treats today's catalog as
+    // known, so only categories added after this point are announced.
+    const knownIds = previous ? previous.knownIds : currentIds.slice();
+    const baseline = { knownIds, announcedIds: previous?.announcedIds ?? [], counts };
+    const newIds = newLiveCategoryIds(filter, baseline, currentIds);
+    const announced = new Set(baseline.announcedIds);
+    const unannounced = newIds.filter(id => !announced.has(id));
+    const next = {
+      knownIds,
+      announcedIds: baseline.announcedIds.concat(unannounced),
+      counts,
+    };
+    if (JSON.stringify(previous) !== JSON.stringify(next)) {
+      StorageService.setLiveCategorySnapshot(pl.id, next);
+    }
+    if (unannounced.length) {
+      log.info(
+        'Xtream Live categories added',
+        'event=xtream.category_filter.new',
+        `count=${String(unannounced.length)}`,
+      );
+      this.liveCategoryNotices.push({
+        playlistId: pl.id,
+        accountName: pl.name || pl.url,
+        count: unannounced.length,
+      });
+    }
+  }
 
   hasFailedSource(playlistIds: readonly string[]): boolean {
     return playlistIds.some(id => this.failedSourceIds.has(id));
@@ -271,7 +350,12 @@ class PlaylistServiceImpl {
       let xtreamCredentials: XtreamCredentials | null = null;
       let xtreamOutput: XtreamLiveOutput = 'ts';
       let xtreamStreams: XtreamLiveStream[] | undefined;
+      let xtreamReferences: XtreamLiveStream[] | undefined;
       let xtreamCatalogAvailable = false;
+      let xtreamGroupFilter: XtreamGroupNameFilter | undefined;
+      const categoryFilter = pl.source === 'xtream'
+        ? normalizeLiveCategoryFilter(pl.xtream?.liveCategories)
+        : undefined;
       if (pl.source === 'xtream' && pl.xtream) {
         const credentials = { baseUrl: pl.url, ...pl.xtream };
         xtreamCredentials = credentials;
@@ -300,6 +384,37 @@ class PlaylistServiceImpl {
           `items=${String(liveCatalog.streams.length)}`,
           `elapsedMs=${String(Date.now() - catalogStarted)}`,
         );
+        xtreamReferences = filterLiveStreams(categoryFilter, xtreamStreams);
+        if (categoryFilter && liveCatalog.available) {
+          log.info(
+            'Xtream Live category filter applied',
+            'event=xtream.category_filter.applied',
+            `load=${String(load)}`,
+            `mode=${categoryFilter.mode}`,
+            `categories=${String(categoryFilter.ids.length)}`,
+            `kept=${String(xtreamReferences.length)}`,
+            `total=${String(xtreamStreams.length)}`,
+          );
+        } else if (categoryFilter) {
+          const categories = await client.getLiveCategories();
+          xtreamGroupFilter = liveCategoryGroupFilter(categoryFilter, categories) ?? undefined;
+          log.warn(
+            xtreamGroupFilter
+              ? 'Xtream Live catalog unavailable; filtering by category name'
+              : 'Xtream Live categories unavailable; loading unfiltered',
+            xtreamGroupFilter
+              ? 'event=xtream.category_filter.name_match'
+              : 'event=xtream.category_filter.unavailable',
+            `load=${String(load)}`,
+          );
+          if (xtreamGroupFilter) {
+            this.recordLiveCategories(pl, categoryFilter, categories.map(category => category.id));
+          }
+        }
+        if (liveCatalog.available) {
+          const counts = liveCategoryCounts(xtreamStreams);
+          this.recordLiveCategories(pl, categoryFilter, Object.keys(counts), counts);
+        }
         fetchUrl = xtreamPlaylistUrl(
           credentials,
           xtreamOutput,
@@ -313,7 +428,7 @@ class PlaylistServiceImpl {
           const loaded = await fetchAndParseM3U(
             fetchUrl,
             60000,
-            xtreamCatalogAvailable ? xtreamStreams : undefined,
+            xtreamCatalogAvailable ? xtreamReferences : undefined,
             xtreamCredentials?.baseUrl,
             (progress: M3ULoadProgress) => {
               sourceProcessed = Math.max(sourceProcessed, progress.channelsProcessed);
@@ -326,6 +441,7 @@ class PlaylistServiceImpl {
                 channelsKept: completedKept + sourceKept,
               });
             },
+            xtreamGroupFilter,
           );
           parsed = loaded.data;
         } catch (err) {
@@ -351,10 +467,11 @@ class PlaylistServiceImpl {
           }
           const client = createXtreamClient(xtreamCredentials);
           const categories = await client.getLiveCategories();
-          const streams = xtreamCatalogAvailable
+          const allStreams = xtreamCatalogAvailable
             ? xtreamStreams ?? []
             : await client.getLiveStreams();
-          fallbackStreams = streams;
+          fallbackStreams = allStreams;
+          const streams = filterLiveStreams(categoryFilter, allStreams);
           log.info(
             'Xtream Player API live catalog completed',
             'event=xtream.live_api.completed',

@@ -256,6 +256,9 @@ class SetupClientImpl {
             liveOutput: normalizeXtreamLiveOutputPreference(
               existing >= 0 ? playlists[existing].xtream?.liveOutput : undefined,
             ),
+            ...(existing >= 0 && playlists[existing].xtream?.liveCategories
+              ? { liveCategories: playlists[existing].xtream!.liveCategories }
+              : {}),
           },
         };
         if (existing >= 0) playlists[existing] = entry;

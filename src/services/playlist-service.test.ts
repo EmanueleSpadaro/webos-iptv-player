@@ -12,6 +12,13 @@ const { storageMock, cacheMock, fetchTextMock } = vi.hoisted(() => ({
     getPlaylistRefreshIntervalMs: vi.fn(() => 6 * 60 * 60 * 1000),
     setChannelCustomization: vi.fn(),
     clearChannelCustomization: vi.fn(),
+    liveCategorySnapshots: new Map<string, unknown>(),
+    getLiveCategorySnapshot: vi.fn(function getLiveCategorySnapshot(id: string) {
+      return storageMock.liveCategorySnapshots.get(id) ?? null;
+    }),
+    setLiveCategorySnapshot: vi.fn((id: string, snapshot: unknown) => {
+      storageMock.liveCategorySnapshots.set(id, snapshot);
+    }),
   },
   cacheMock: {
     getCachedPlaylist: vi.fn(),
@@ -39,10 +46,11 @@ vi.mock('../parsers/m3u-loader', async (importOriginal) => {
         channelsKept: number;
         channelsDropped: number;
       }) => void,
+      groupFilter?: { mode: 'include' | 'exclude'; names: string[] },
     ) => {
       const text = await fetchTextMock(url, timeout);
       const { parseM3U } = await import('../parsers/m3u-parser');
-      const liveFilters = actual.createXtreamM3ULiveFilters(streams, baseUrl);
+      const liveFilters = actual.createXtreamM3ULiveFilters(streams, baseUrl, groupFilter);
       const data = parseM3U(text, url, {
         ...(liveFilters.streamLocationPrefilter
           ? {
@@ -83,6 +91,7 @@ vi.mock('../utils/fetch-helper', async (importOriginal) => ({
 }));
 
 import { PlaylistService } from './playlist-service';
+import { fetchAndParseM3U } from '../parsers/m3u-loader';
 import {
   channelKey,
   legacyChannelKey,
@@ -869,6 +878,312 @@ https://host/token/abc?token=new&x=1`;
     fetchTextMock.mockRejectedValue(new Error('down'));
     await PlaylistService.refresh();
     expect(PlaylistService.playlistTabs).toEqual([{ id: 'x', name: 'Acct' }]);
+  });
+});
+
+describe('PlaylistService.refresh (Xtream Live categories)', () => {
+  const XT = `#EXTM3U
+#EXTINF:-1 group-title="News",Alpha
+http://host:8080/live/u1/p1/101.ts
+#EXTINF:-1 group-title="Sports",Bravo
+http://host:8080/live/u1/p1/102.ts`;
+  let liveStreams: Array<Record<string, unknown>>;
+  let liveStreamsBody: string | null;
+  let categoriesBody: string;
+
+  function account(liveCategories?: { mode: 'include' | 'exclude'; ids: string[] }) {
+    storageMock.getPlaylists.mockReturnValue([
+      { id: 'x', name: 'Acct', url: 'http://host:8080', source: 'xtream',
+        xtream: { username: 'u1', password: 'p1', ...(liveCategories ? { liveCategories } : {}) } },
+    ]);
+  }
+
+  function referencesPassed(): string[] | undefined {
+    const streams = vi.mocked(fetchAndParseM3U).mock.calls[0][2];
+    return streams?.map(stream => stream.streamId);
+  }
+
+  beforeEach(() => {
+    storageMock.liveCategorySnapshots.clear();
+    PlaylistService.takeLiveCategoryNotices();
+    liveStreams = [
+      { stream_id: 101, category_id: 'c1', tv_archive: 1, tv_archive_duration: 2 },
+      { stream_id: 102, category_id: 'c2', tv_archive: 1, tv_archive_duration: 3 },
+    ];
+    liveStreamsBody = null;
+    categoriesBody = JSON.stringify([
+      { category_id: 'c1', category_name: '  NEWS ' },
+      { category_id: 'c2', category_name: 'Sports' },
+    ]);
+    account();
+    fetchTextMock.mockImplementation((url: string) => {
+      if (url.includes('action=get_live_streams')) {
+        return Promise.resolve(liveStreamsBody ?? JSON.stringify(liveStreams));
+      }
+      if (url.includes('action=get_live_categories')) return Promise.resolve(categoriesBody);
+      if (url.includes('player_api.php')) {
+        return Promise.resolve(JSON.stringify({ server_info: { timezone: 'UTC' } }));
+      }
+      return Promise.resolve(XT);
+    });
+  });
+
+  it('loads every Live channel without a filter', async () => {
+    const channels = await PlaylistService.refresh();
+    expect(channels.map(channel => channel.name)).toEqual(['Alpha', 'Bravo']);
+    expect(referencesPassed()).toEqual(['101', '102']);
+    expect(vi.mocked(fetchAndParseM3U).mock.calls[0][5]).toBeUndefined();
+  });
+
+  it('narrows the Live references to included categories and keeps catch-up', async () => {
+    account({ mode: 'include', ids: ['c1'] });
+
+    const channels = await PlaylistService.refresh();
+
+    expect(referencesPassed()).toEqual(['101']);
+    expect(channels.map(channel => channel.name)).toEqual(['Alpha']);
+    expect(channels[0]).toMatchObject({
+      catchup: 'xtream',
+      catchupStreamId: '101',
+      catchupDays: 2,
+    });
+    expect(fetchTextMock.mock.calls.some(([url]) =>
+      url.includes('action=get_live_categories'))).toBe(false);
+  });
+
+  it('drops excluded categories but keeps a stream listed in another category', async () => {
+    liveStreams[0].category_ids = ['c1', 'c3'];
+    liveStreams.push({ stream_id: 103, category_id: 'c2', tv_archive: 0 });
+    account({ mode: 'exclude', ids: ['c2', 'c1'] });
+
+    const channels = await PlaylistService.refresh();
+
+    // 101 sits in c3 too, so it survives excluding c1 and c2.
+    expect(referencesPassed()).toEqual(['101']);
+    expect(channels.map(channel => channel.name)).toEqual(['Alpha']);
+  });
+
+  it('ignores a malformed filter and loads everything', async () => {
+    account({ mode: 'include', ids: [] });
+    const channels = await PlaylistService.refresh();
+    expect(channels.map(channel => channel.name)).toEqual(['Alpha', 'Bravo']);
+  });
+
+  it('filters by category name when the Live catalog is unavailable', async () => {
+    liveStreamsBody = '<html>nope</html>';
+    account({ mode: 'include', ids: ['c1'] });
+
+    const channels = await PlaylistService.refresh();
+
+    expect(vi.mocked(fetchAndParseM3U).mock.calls[0][2]).toBeUndefined();
+    expect(vi.mocked(fetchAndParseM3U).mock.calls[0][5])
+      .toEqual({ mode: 'include', names: ['news'] });
+    expect(channels.map(channel => channel.name)).toEqual(['Alpha']);
+  });
+
+  it('loads no channels by name when every included category was removed', async () => {
+    liveStreamsBody = '<html>nope</html>';
+    account({ mode: 'include', ids: ['c9'] });
+
+    const channels = await PlaylistService.refresh();
+
+    expect(vi.mocked(fetchAndParseM3U).mock.calls[0][5]).toEqual({ mode: 'include', names: [] });
+    expect(channels).toEqual([]);
+  });
+
+  it('applies an exclude filter by category name when the Live catalog is unavailable', async () => {
+    liveStreamsBody = '<html>nope</html>';
+    account({ mode: 'exclude', ids: ['c1'] });
+
+    const channels = await PlaylistService.refresh();
+
+    expect(vi.mocked(fetchAndParseM3U).mock.calls[0][5])
+      .toEqual({ mode: 'exclude', names: ['news'] });
+    expect(channels.map(channel => channel.name)).toEqual(['Bravo']);
+  });
+
+  it('loads unfiltered when neither the catalog nor the categories load', async () => {
+    liveStreamsBody = '<html>nope</html>';
+    categoriesBody = '<html>nope</html>';
+    account({ mode: 'include', ids: ['c1'] });
+
+    const channels = await PlaylistService.refresh();
+
+    expect(vi.mocked(fetchAndParseM3U).mock.calls[0][5]).toBeUndefined();
+    expect(channels.map(channel => channel.name)).toEqual(['Alpha', 'Bravo']);
+    expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('announces new categories while filtering by category name', async () => {
+    liveStreamsBody = '<html>nope</html>';
+    categoriesBody = JSON.stringify([
+      { category_id: 'c1', category_name: 'News' },
+      { category_id: 'c2', category_name: 'Sports' },
+      { category_id: 'c3', category_name: 'Movies' },
+    ]);
+    account({ mode: 'include', ids: ['c1'] });
+    storageMock.liveCategorySnapshots.set('x', {
+      knownIds: ['c1', 'c2'],
+      announcedIds: [],
+      counts: { c1: 1, c2: 1 },
+    });
+
+    await PlaylistService.refresh();
+
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([
+      { playlistId: 'x', accountName: 'Acct', count: 1 },
+    ]);
+    expect(storageMock.liveCategorySnapshots.get('x')).toEqual({
+      knownIds: ['c1', 'c2'],
+      announcedIds: ['c3'],
+      counts: { c1: 1, c2: 1 },
+    });
+  });
+
+  it('applies the filter to the Player API fallback playlist', async () => {
+    account({ mode: 'include', ids: ['c2'] });
+    fetchTextMock.mockImplementation((url: string) => {
+      if (url.includes('action=get_live_streams')) {
+        return Promise.resolve(JSON.stringify([
+          { stream_id: 201, name: 'Alpha', category_id: 'c1', tv_archive: 0 },
+          { stream_id: 202, name: 'Bravo', category_id: 'c2', tv_archive: 0 },
+        ]));
+      }
+      if (url.includes('action=get_live_categories')) return Promise.resolve(categoriesBody);
+      if (url.includes('player_api.php')) return Promise.resolve('{}');
+      return Promise.resolve('#EXTM3U');
+    });
+
+    const channels = await PlaylistService.refresh();
+
+    expect(channels.map(channel => channel.name)).toEqual(['Bravo']);
+    expect(channels[0].group).toBe('Sports');
+  });
+
+  it('seeds a snapshot on first load and announces each new category set once', async () => {
+    account({ mode: 'include', ids: ['c1'] });
+
+    await PlaylistService.refresh();
+    expect(PlaylistService.hasLiveCategoryNotices()).toBe(false);
+    expect(storageMock.liveCategorySnapshots.get('x')).toEqual({
+      knownIds: ['c1', 'c2'],
+      announcedIds: [],
+      counts: { c1: 1, c2: 1 },
+    });
+
+    liveStreams.push(
+      { stream_id: 103, category_id: 'c3', tv_archive: 0 },
+      { stream_id: 104, category_id: 'c4', tv_archive: 0 },
+      { stream_id: 105, category_id: 'c4', tv_archive: 0 },
+    );
+    await PlaylistService.refresh();
+    expect(PlaylistService.hasLiveCategoryNotices()).toBe(true);
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([
+      { playlistId: 'x', accountName: 'Acct', count: 2 },
+    ]);
+    expect(PlaylistService.hasLiveCategoryNotices()).toBe(false);
+    expect(storageMock.liveCategorySnapshots.get('x')).toMatchObject({
+      knownIds: ['c1', 'c2'],
+      announcedIds: ['c3', 'c4'],
+      counts: { c1: 1, c2: 1, c3: 1, c4: 2 },
+    });
+
+    await PlaylistService.refresh();
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([]);
+  });
+
+  it('announces only the categories added since the last notice', async () => {
+    account({ mode: 'include', ids: ['c1'] });
+    storageMock.liveCategorySnapshots.set('x', {
+      knownIds: ['c1', 'c2'],
+      announcedIds: ['c3'],
+      counts: { c1: 1, c2: 1 },
+    });
+    liveStreams.push(
+      { stream_id: 103, category_id: 'c3', tv_archive: 0 },
+      { stream_id: 104, category_id: 'c4', tv_archive: 0 },
+    );
+
+    await PlaylistService.refresh();
+
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([
+      { playlistId: 'x', accountName: 'Acct', count: 1 },
+    ]);
+  });
+
+  it('does not re-announce a category that briefly disappeared', async () => {
+    account({ mode: 'include', ids: ['c1'] });
+    storageMock.liveCategorySnapshots.set('x', {
+      knownIds: ['c1', 'c2'],
+      announcedIds: [],
+      counts: { c1: 1, c2: 1 },
+    });
+    liveStreams.push({ stream_id: 103, category_id: 'c3', tv_archive: 0 });
+    await PlaylistService.refresh();
+    expect(PlaylistService.takeLiveCategoryNotices()).toHaveLength(1);
+
+    liveStreams.pop();
+    await PlaylistService.refresh();
+    expect(storageMock.liveCategorySnapshots.get('x')).toMatchObject({ announcedIds: ['c3'] });
+
+    liveStreams.push({ stream_id: 103, category_id: 'c3', tv_archive: 0 });
+    await PlaylistService.refresh();
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([]);
+  });
+
+  it('drops a queued notice once its account is removed, re-filtered, or reviewed', async () => {
+    const queue = async () => {
+      account({ mode: 'include', ids: ['c1'] });
+      storageMock.liveCategorySnapshots.set('x', { knownIds: ['c1', 'c2'], announcedIds: [], counts: {} });
+      await PlaylistService.refresh();
+    };
+    liveStreams.push({ stream_id: 103, category_id: 'c3', tv_archive: 0 });
+
+    await queue();
+    storageMock.getPlaylists.mockReturnValue([]);
+    expect(PlaylistService.hasLiveCategoryNotices()).toBe(false);
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([]);
+
+    await queue();
+    account({ mode: 'exclude', ids: ['c2'] });
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([]);
+
+    await queue();
+    storageMock.liveCategorySnapshots.set('x', { knownIds: ['c1', 'c2', 'c3'], announcedIds: [], counts: {} });
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([]);
+
+    await queue();
+    expect(PlaylistService.takeLiveCategoryNotices()).toEqual([
+      { playlistId: 'x', accountName: 'Acct', count: 1 },
+    ]);
+  });
+
+  it('never announces new categories in exclude mode', async () => {
+    account({ mode: 'exclude', ids: ['c2'] });
+    storageMock.liveCategorySnapshots.set('x', {
+      knownIds: ['c1', 'c2'],
+      announcedIds: [],
+      counts: { c1: 1, c2: 1 },
+    });
+    liveStreams.push({ stream_id: 103, category_id: 'c3', tv_archive: 0 });
+
+    await PlaylistService.refresh();
+
+    expect(PlaylistService.hasLiveCategoryNotices()).toBe(false);
+    expect(storageMock.liveCategorySnapshots.get('x')).toMatchObject({
+      announcedIds: [],
+      counts: { c1: 1, c2: 1, c3: 1 },
+    });
+  });
+
+  it('does not rewrite an unchanged snapshot', async () => {
+    account({ mode: 'include', ids: ['c1'] });
+    await PlaylistService.refresh();
+    storageMock.setLiveCategorySnapshot.mockClear();
+
+    await PlaylistService.refresh();
+
+    expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
   });
 });
 

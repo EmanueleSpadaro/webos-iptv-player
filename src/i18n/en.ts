@@ -474,6 +474,26 @@ export const EN_MESSAGES = {
   'date.monthDay': '{month}/{day}',
   'duration.hoursMinutes': '{hours}h {minutes}m',
   'duration.minutes': '{minutes}m',
+  'liveCategories.title': 'Live categories',
+  'liveCategories.all': 'All',
+  'liveCategories.summary': '{count} of {total}',
+  'liveCategories.newBadge': {
+    one: '{count} new',
+    other: '{count} new',
+  },
+  'liveCategories.newTag': 'New',
+  'liveCategories.autoShowNew': 'Show new categories automatically',
+  'liveCategories.autoShowNewHint': 'When off, new categories stay hidden until you select them.',
+  'liveCategories.newSection': 'New Categories',
+  'liveCategories.selected': 'Selected: {count} of {total}',
+  'liveCategories.selectOne': 'Select at least one category.',
+  'liveCategories.newToast': {
+    one: '{name}: {count} new live category. Review it in Settings.',
+    other: '{name}: {count} new live categories. Review them in Settings.',
+  },
+  'liveCategories.loadError': 'Couldn\'t load categories.',
+  'liveCategories.tryAgain': 'Try again',
+  'liveCategories.settingsHint': 'Load only the categories you select. Fewer categories load faster.',
 } as const;
 
 export type MessageKey = keyof typeof EN_MESSAGES;

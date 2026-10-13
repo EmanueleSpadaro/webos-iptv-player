@@ -9,7 +9,12 @@ const { storageMock, fetchWithTimeoutMock } = vi.hoisted(() => ({
       source?: 'upload' | 'url' | 'xtream';
       enabled?: boolean;
       count?: number;
-      xtream?: { username: string; password: string; liveOutput?: 'auto' | 'ts' | 'm3u8' };
+      xtream?: {
+        username: string;
+        password: string;
+        liveOutput?: 'auto' | 'ts' | 'm3u8';
+        liveCategories?: { mode: 'include' | 'exclude'; ids: string[] };
+      };
     }>,
     manualEpgSources: [] as Array<{ url: string; playlistIds: string[] }>,
     onlineSubtitles: {
@@ -462,6 +467,34 @@ describe('SetupClient.applyPendingActions', () => {
         xtream: { username: 'u1', password: 'new', liveOutput: 'm3u8' },
       },
     ]);
+  });
+
+  it('keeps the Live category filter only for the same server and username', async () => {
+    const liveCategories = { mode: 'include' as const, ids: ['c1'] };
+    storageMock.playlists = [{
+      id: 'x1',
+      name: 'host',
+      url: 'http://host',
+      source: 'xtream',
+      xtream: { username: 'u1', password: 'old', liveOutput: 'ts', liveCategories },
+    }];
+    fetchWithTimeoutMock
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 6, type: 'xtream', serverUrl: 'http://host/', username: 'u1', password: 'new' },
+        { id: 7, type: 'xtream', serverUrl: 'http://host', username: 'u2', password: 'p2' },
+      ]))
+      .mockResolvedValue(jsonResponse({ deleted: true }));
+
+    await expect(SetupClient.applyPendingActions()).resolves.toBe(true);
+
+    const saved = storageMock.setPlaylists.mock.calls[0][0] as typeof storageMock.playlists;
+    expect(saved).toHaveLength(2);
+    expect(saved[0]).toMatchObject({
+      id: 'x1',
+      xtream: { username: 'u1', password: 'new', liveCategories },
+    });
+    expect(saved[1].id).not.toBe('x1');
+    expect(saved[1].xtream).toEqual({ username: 'u2', password: 'p2', liveOutput: 'ts' });
   });
 
   it('removes an Xtream account and publishes the updated state', async () => {

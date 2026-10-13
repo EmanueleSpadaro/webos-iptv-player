@@ -421,3 +421,78 @@ function encodeUtf16(value: string, littleEndian: boolean): Uint8Array {
   }
   return bytes;
 }
+
+describe('Xtream Live category name-match fallback', () => {
+  const source = [
+    '#EXTM3U',
+    '#EXTINF:-1 group-title="Alpha",ch1',
+    'http://host/live/u1/p1/101.ts',
+    '#EXTINF:-1 group-title="  BRAVO   one ",ch2',
+    'http://host/live/u1/p1/102.ts',
+    '#EXTINF:-1 group-title="Charlie",ch3',
+    'http://host/live/u1/p1/103.ts',
+  ].join('\n');
+
+  function stubSource(): void {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      streamResponse([new TextEncoder().encode(source)])));
+  }
+
+  it('keeps only channels whose group is listed in include mode', async () => {
+    stubSource();
+    const result = await fetchAndParseM3UInWorker({
+      url: 'http://host/get.php',
+      timeout: 5000,
+      xtreamBaseUrl: 'http://host',
+      xtreamGroupFilter: { mode: 'include', names: ['alpha', 'bravo one'] },
+    });
+
+    expect(result.data.channels.map(channel => channel.name)).toEqual(['ch1', 'ch2']);
+    expect(result.metrics).toMatchObject({
+      filter: 'unavailable',
+      channelsKept: 2,
+      channelsDropped: 1,
+    });
+  });
+
+  it('drops channels whose group is listed in exclude mode', async () => {
+    stubSource();
+    const result = await fetchAndParseM3UInWorker({
+      url: 'http://host/get.php',
+      timeout: 5000,
+      xtreamBaseUrl: 'http://host',
+      xtreamGroupFilter: { mode: 'exclude', names: ['bravo one'] },
+    });
+
+    expect(result.data.channels.map(channel => channel.name)).toEqual(['ch1', 'ch3']);
+    expect(result.metrics).toMatchObject({ channelsKept: 2, channelsDropped: 1 });
+  });
+
+  it('carries the group filter from fetchAndParseM3U to the worker request', async () => {
+    stubSource();
+    const progress: Array<{ channelsKept: number; channelsDropped: number }> = [];
+
+    const result = await fetchAndParseM3U(
+      'http://host/get.php',
+      5000,
+      undefined,
+      'http://host',
+      update => progress.push(update),
+      { mode: 'include', names: ['charlie'] },
+    );
+
+    expect(result.data.channels.map(channel => channel.name)).toEqual(['ch3']);
+    expect(progress[progress.length - 1]).toMatchObject({
+      channelsKept: 1,
+      channelsDropped: 2,
+    });
+  });
+
+  it('loads every channel when no group filter is given', async () => {
+    stubSource();
+    const result = await fetchAndParseM3U('http://host/get.php', 5000, undefined, 'http://host');
+
+    expect(result.data.channels.map(channel => channel.name)).toEqual(['ch1', 'ch2', 'ch3']);
+    expect(result.metrics).toMatchObject({ filter: 'unavailable', channelsDropped: 0 });
+  });
+});

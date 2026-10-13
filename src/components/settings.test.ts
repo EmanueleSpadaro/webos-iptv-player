@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { ChannelCycleMode, ManualEpgSource, TzMode } from '../types';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { ChannelCycleMode, ManualEpgSource, PlaylistEntry, TzMode, XtreamLiveCategorySnapshot } from '../types';
 import type { AnimationMode } from '../services/motion-service';
-import type { XtreamAccountInfo } from '../services/xtream-client';
+import type { XtreamAccountInfo, XtreamLiveCategory } from '../services/xtream-client';
 
 const {
   state,
@@ -24,7 +24,11 @@ const {
       source?: 'upload' | 'url' | 'xtream';
       enabled?: boolean;
       count?: number;
-      xtream?: { username: string; password: string };
+      xtream?: {
+        username: string;
+        password: string;
+        liveCategories?: { mode: 'include' | 'exclude'; ids: string[] };
+      };
     }[],
     manualEpgSources: [] as ManualEpgSource[],
     autoPlay: false,
@@ -101,6 +105,8 @@ const {
       getLocalePreference: vi.fn(() => state.locale),
       getOnlineSubtitleConfig: vi.fn(() => state.onlineSubtitles),
       getSelectedXtreamAccountId: vi.fn(() => null),
+      getLiveCategorySnapshot: vi.fn(() => null),
+      setLiveCategorySnapshot: vi.fn(),
       getShowHiddenChannels: vi.fn(() => state.showHidden),
       setShowHiddenChannels: vi.fn((v: boolean) => { state.showHidden = v; }),
       getChannelCustomization: vi.fn(() => null),
@@ -164,6 +170,7 @@ const {
     // mockResolvedValueOnce. Never touches the network.
     xtreamMock: {
       getAccountInfo: vi.fn(async (): Promise<XtreamAccountInfo | null> => null),
+      getLiveCategories: vi.fn(async (): Promise<XtreamLiveCategory[]> => []),
     },
     healthMock: {
       getSummary: vi.fn((channels: unknown[]) => ({
@@ -201,7 +208,10 @@ vi.mock('../services/motion-service', () => ({
 vi.mock('../services/idb-cache', () => cacheMock);
 vi.mock('./toast', () => ({ showToast: toastMock.showToast }));
 vi.mock('../services/xtream-client', () => ({
-  createXtreamClient: () => ({ getAccountInfo: xtreamMock.getAccountInfo }),
+  createXtreamClient: () => ({
+    getAccountInfo: xtreamMock.getAccountInfo,
+    getLiveCategories: xtreamMock.getLiveCategories,
+  }),
 }));
 vi.mock('../services/upload-client', () => ({
   UploadClient: uploadMock,
@@ -220,11 +230,12 @@ vi.mock('../services/reminder-service', () => ({
 vi.mock('../services/setup-client', () => ({ SetupClient: setupMock }));
 vi.mock('../services/channel-health', () => ({ ChannelHealthService: healthMock }));
 
-import { Settings } from './settings';
+import { Settings, liveCategoriesButtonContent } from './settings';
 import { setLocale } from '../i18n';
 import { PlaylistService } from '../services/playlist-service';
 import { EpgService } from '../services/epg-service';
 import { channelKey, legacyChannelKey } from '../utils/channel';
+import { morph } from '../utils/morph';
 
 let container: HTMLElement;
 let onSave: ReturnType<typeof vi.fn>;
@@ -2187,5 +2198,213 @@ describe('Settings Xtream section', () => {
     const status = container.querySelector('#xtream-entries .xtream-status')!;
     expect(status.classList.contains('err')).toBe(true);
     expect(status.textContent).toContain('verify');
+  });
+});
+
+describe('Settings Xtream Live categories', () => {
+  const snapshots = new Map<string, XtreamLiveCategorySnapshot>();
+  const account = (over: Partial<PlaylistEntry['xtream']> = {}) => ({
+    id: 'x1', name: 'Acct', url: 'http://host:8080', source: 'xtream' as const,
+    xtream: { username: 'u', password: 'p', ...over },
+  });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const picker = () => document.body.querySelector<HTMLElement>('.live-category-picker');
+  const button = () => container.querySelector<HTMLElement>('#xtream-entries .xtream-live-categories')!;
+  const savedXtream = () => (storageMock.setPlaylists.mock.calls.at(-1)![0] as PlaylistEntry[])
+    .filter(pl => pl.source === 'xtream');
+
+  beforeEach(() => {
+    snapshots.clear();
+    storageMock.getLiveCategorySnapshot.mockImplementation(
+      ((id: string) => snapshots.get(id) ?? null) as () => null,
+    );
+    xtreamMock.getLiveCategories.mockResolvedValue([
+      { id: 'c1', name: 'Alpha', parentId: '' },
+      { id: 'c2', name: 'Bravo', parentId: '' },
+      { id: 'c3', name: 'Charlie', parentId: '' },
+    ]);
+  });
+
+  afterEach(() => {
+    storageMock.getLiveCategorySnapshot.mockImplementation(() => null);
+    xtreamMock.getLiveCategories.mockResolvedValue([]);
+  });
+
+  it('shows All on the card when the account has no filter', () => {
+    state.playlists = [account()];
+    settings.render();
+    const btn = button();
+    const foot = btn.parentElement!;
+    expect(foot.querySelector('.check-xtream')!.nextElementSibling).toBe(btn);
+    expect(btn.querySelector('.xtream-live-categories-value')?.textContent).toBe('All');
+    expect(btn.querySelector('.xtream-live-categories-new')).toBeNull();
+  });
+
+  it('shows the kept share and a badge for unseen categories in include mode', () => {
+    state.playlists = [account({ liveCategories: { mode: 'include', ids: ['c1'] } })];
+    snapshots.set('x1', {
+      knownIds: ['c1', 'c2'],
+      announcedIds: ['c3', 'c4'],
+      counts: { c1: 4, c2: 2, c3: 1, c4: 1 },
+    });
+    settings.render();
+    expect(button().querySelector('.xtream-live-categories-value')?.textContent).toBe('1 of 4');
+    expect(button().querySelector('.xtream-live-categories-new')?.textContent).toBe('2 new');
+  });
+
+  it('counts kept categories in exclude mode without a new badge', () => {
+    state.playlists = [account({ liveCategories: { mode: 'exclude', ids: ['c2'] } })];
+    snapshots.set('x1', {
+      knownIds: ['c1', 'c2'],
+      announcedIds: [],
+      counts: { c1: 4, c2: 2, c3: 1 },
+    });
+    settings.render();
+    expect(button().querySelector('.xtream-live-categories-value')?.textContent).toBe('2 of 3');
+    expect(button().querySelector('.xtream-live-categories-new')).toBeNull();
+  });
+
+  it('omits the share while the catalog size is unknown', () => {
+    const content = document.createElement('div');
+    morph(content, liveCategoriesButtonContent({ mode: 'include', ids: ['c1'] }, null));
+    expect(content.querySelector('.xtream-live-categories-value')).toBeNull();
+    expect(content.textContent).toBe('Live categories');
+  });
+
+  it('keeps the stored filter on save while the server and username are unchanged', () => {
+    const liveCategories = { mode: 'include' as const, ids: ['c1'] };
+    state.playlists = [account({ liveCategories })];
+    settings.render();
+    const card = container.querySelector<HTMLElement>('#xtream-entries .xtream-card')!;
+    card.querySelector<HTMLInputElement>('.xtream-url')!.value = 'host:8080/';
+    card.querySelector<HTMLInputElement>('.xtream-password')!.value = 'p2';
+    click('#save-settings');
+    expect(savedXtream()[0].xtream).toEqual({
+      username: 'u', password: 'p2', liveOutput: 'ts', liveCategories,
+    });
+  });
+
+  it('drops the stored filter on save when the username changes', () => {
+    state.playlists = [account({ liveCategories: { mode: 'include', ids: ['c1'] } })];
+    settings.render();
+    container.querySelector<HTMLInputElement>('#xtream-entries .xtream-username')!.value = 'u2';
+    click('#save-settings');
+    expect(savedXtream()[0].xtream).toEqual({ username: 'u2', password: 'p', liveOutput: 'ts' });
+  });
+
+  it('asks for credentials instead of opening the picker on an incomplete card', async () => {
+    state.playlists = [];
+    settings.render();
+    click('#add-xtream');
+    const card = container.querySelector<HTMLElement>('#xtream-entries .xtream-card')!;
+    card.querySelector<HTMLInputElement>('.xtream-url')!.value = 'http://host:8080';
+    card.querySelector<HTMLInputElement>('.xtream-username')!.value = 'u';
+    card.querySelector<HTMLElement>('.xtream-live-categories')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    const status = card.querySelector('.xtream-status')!;
+    expect(status.classList.contains('err')).toBe(true);
+    expect(status.textContent).toContain('server URL, username, and password');
+    expect(settings.isPromptVisible).toBe(false);
+    expect(picker()?.classList.contains('hidden') ?? true).toBe(true);
+    expect(xtreamMock.getLiveCategories).not.toHaveBeenCalled();
+  });
+
+  it('saves the picker result for the same account and records a reviewed snapshot', async () => {
+    state.playlists = [account()];
+    snapshots.set('x1', { knownIds: ['c1', 'c9'], announcedIds: ['c3'], counts: { c1: 5, c9: 2 } });
+    settings.render();
+    click('#xtream-entries .xtream-live-categories');
+    await flush();
+
+    expect(settings.isPromptVisible).toBe(true);
+    expect(picker()!.classList.contains('hidden')).toBe(false);
+    picker()!.querySelector<HTMLElement>('[data-category-id="c2"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    settings.handleAction('yellow');
+
+    expect(settings.isPromptVisible).toBe(false);
+    expect(storageMock.setLiveCategorySnapshot).toHaveBeenCalledWith('x1', {
+      knownIds: ['c1', 'c2', 'c3'],
+      announcedIds: [],
+      counts: { c1: 5 },
+    });
+    expect(button().querySelector('.xtream-live-categories-value')?.textContent).toBe('2 of 3');
+
+    click('#save-settings');
+    expect(savedXtream()[0].xtream?.liveCategories).toEqual({ mode: 'include', ids: ['c1', 'c3'] });
+    expect(onSave).toHaveBeenCalledWith('reload');
+  });
+
+  it('drops a picker result when the username changes before save', async () => {
+    state.playlists = [account()];
+    settings.render();
+    click('#xtream-entries .xtream-live-categories');
+    await flush();
+    picker()!.querySelector<HTMLElement>('[data-category-id="c2"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    settings.handleAction('yellow');
+    container.querySelector<HTMLInputElement>('#xtream-entries .xtream-username')!.value = 'u2';
+
+    click('#save-settings');
+
+    expect(savedXtream()[0].xtream?.liveCategories).toBeUndefined();
+  });
+
+  it('keeps the reviewed snapshot when the account is re-pointed before the picker opens', async () => {
+    state.playlists = [account()];
+    snapshots.set('x1', { knownIds: ['c1'], announcedIds: [], counts: {} });
+    storageMock.setLiveCategorySnapshot.mockImplementation(
+      ((id: string, snap: XtreamLiveCategorySnapshot) => { snapshots.set(id, snap); }) as () => void,
+    );
+    // Mirrors StorageService pruning the snapshot of a re-pointed account.
+    storageMock.setPlaylists.mockImplementation((() => { snapshots.clear(); return true; }) as () => boolean);
+    settings.render();
+    container.querySelector<HTMLInputElement>('#xtream-entries .xtream-username')!.value = 'u2';
+    click('#xtream-entries .xtream-live-categories');
+    await flush();
+    settings.handleAction('yellow');
+    expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
+    expect(snapshots.get('x1')).toEqual({ knownIds: ['c1'], announcedIds: [], counts: {} });
+
+    click('#save-settings');
+
+    expect(savedXtream()[0].xtream?.username).toBe('u2');
+    expect(snapshots.get('x1')).toEqual({ knownIds: ['c1', 'c2', 'c3'], announcedIds: [], counts: {} });
+    storageMock.setLiveCategorySnapshot.mockReset();
+    storageMock.setPlaylists.mockReset();
+  });
+
+  it('does not write a re-pointed account snapshot when saving the playlists fails', async () => {
+    state.playlists = [account()];
+    storageMock.setPlaylists.mockReturnValue(false);
+    settings.render();
+    container.querySelector<HTMLInputElement>('#xtream-entries .xtream-username')!.value = 'u2';
+    click('#xtream-entries .xtream-live-categories');
+    await flush();
+    settings.handleAction('yellow');
+
+    click('#save-settings');
+
+    expect(storageMock.setPlaylists).toHaveBeenCalled();
+    expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
+    storageMock.setPlaylists.mockReset();
+  });
+
+  it('routes actions to the open picker and hides it on dismissPrompt', async () => {
+    state.playlists = [account({ liveCategories: { mode: 'include', ids: ['c1'] } })];
+    settings.render();
+    click('#xtream-entries .xtream-live-categories');
+    await flush();
+    expect(settings.isPromptVisible).toBe(true);
+
+    settings.dismissPrompt();
+
+    expect(settings.isPromptVisible).toBe(false);
+    expect(picker()!.classList.contains('hidden')).toBe(true);
+    expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
+    click('#save-settings');
+    expect(savedXtream()[0].xtream?.liveCategories).toEqual({ mode: 'include', ids: ['c1'] });
   });
 });

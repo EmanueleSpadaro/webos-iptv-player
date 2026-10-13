@@ -329,6 +329,8 @@ export function extractDiagnosticTimeline(logs) {
     const programmes = Number(fields.match(/\bprogrammes=(\d+)/)?.[1] ?? NaN);
     const streams = Number(fields.match(/\bstreams=(\d+)/)?.[1] ?? NaN);
     const categories = Number(fields.match(/\bcategories=(\d+)/)?.[1] ?? NaN);
+    const total = Number(fields.match(/\btotal=(\d+)/)?.[1] ?? NaN);
+    const mode = fields.match(/\bmode=([a-z0-9_-]+)/i)?.[1] ?? '';
     const epg = Number(fields.match(/\bepg=(\d+)/)?.[1] ?? NaN);
     const elapsedMs = Number(fields.match(/\belapsedMs=(\d+)/)?.[1] ?? NaN);
     const delayMs = Number(fields.match(/\bdelayMs=(\d+)/)?.[1] ?? NaN);
@@ -371,6 +373,8 @@ export function extractDiagnosticTimeline(logs) {
       programmes: Number.isFinite(programmes) ? programmes : null,
       streams: Number.isFinite(streams) ? streams : null,
       categories: Number.isFinite(categories) ? categories : null,
+      total: Number.isFinite(total) ? total : null,
+      mode,
       epg: Number.isFinite(epg) ? epg : null,
       elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : null,
       delayMs: Number.isFinite(delayMs) ? delayMs : null,
@@ -403,6 +407,10 @@ export function extractXtreamTimeline(logs) {
     const available = Number(entry.text.match(/\bavailable=([01])/)?.[1] ?? NaN);
     const streams = Number(entry.text.match(/\bstreams=(\d+)/)?.[1] ?? NaN);
     const categories = Number(entry.text.match(/\bcategories=(\d+)/)?.[1] ?? NaN);
+    const count = Number(entry.text.match(/\bcount=(\d+)/)?.[1] ?? NaN);
+    const kept = Number(entry.text.match(/\bkept=(\d+)/)?.[1] ?? NaN);
+    const total = Number(entry.text.match(/\btotal=(\d+)/)?.[1] ?? NaN);
+    const mode = entry.text.match(/\bmode=([a-z0-9_-]+)/i)?.[1] ?? '';
     const elapsedMs = Number(entry.text.match(/\belapsedMs=(\d+)/)?.[1] ?? NaN);
     timeline.push({
       observedAt: entry.observedAt,
@@ -419,6 +427,10 @@ export function extractXtreamTimeline(logs) {
       available: Number.isFinite(available) ? available : null,
       streams: Number.isFinite(streams) ? streams : null,
       categories: Number.isFinite(categories) ? categories : null,
+      count: Number.isFinite(count) ? count : null,
+      kept: Number.isFinite(kept) ? kept : null,
+      total: Number.isFinite(total) ? total : null,
+      mode,
       elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : null,
       level: entry.level,
       text: entry.text,
@@ -712,7 +724,9 @@ export function formatDiagnosticSummary(report) {
     if (event.progress != null) fields.push(`progress=${String(event.progress)}`);
     if (event.programmes != null) fields.push(`programmes=${String(event.programmes)}`);
     if (event.streams != null) fields.push(`streams=${String(event.streams)}`);
+    if (event.mode) fields.push(`mode=${event.mode}`);
     if (event.categories != null) fields.push(`categories=${String(event.categories)}`);
+    if (event.total != null) fields.push(`total=${String(event.total)}`);
     if (event.epg != null) fields.push(`epg=${String(event.epg)}`);
     if (event.elapsedMs != null) fields.push(`elapsedMs=${String(event.elapsedMs)}`);
     if (event.delayMs != null) fields.push(`delayMs=${String(event.delayMs)}`);
@@ -751,7 +765,11 @@ export function formatDiagnosticSummary(report) {
     if (event.load != null) fields.push(`load=${String(event.load)}`);
     if (event.available != null) fields.push(`available=${String(event.available)}`);
     if (event.streams != null) fields.push(`streams=${String(event.streams)}`);
+    if (event.mode) fields.push(`mode=${event.mode}`);
     if (event.categories != null) fields.push(`categories=${String(event.categories)}`);
+    if (event.count != null) fields.push(`count=${String(event.count)}`);
+    if (event.kept != null) fields.push(`kept=${String(event.kept)}`);
+    if (event.total != null) fields.push(`total=${String(event.total)}`);
     if (event.elapsedMs != null) fields.push(`elapsedMs=${String(event.elapsedMs)}`);
     lines.push(`- ${event.event}${fields.length ? ` ${fields.join(' ')}` : ''}`);
   }
