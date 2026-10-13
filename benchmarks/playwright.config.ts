@@ -4,6 +4,8 @@ const baseURL = 'http://localhost:3000';
 
 export default defineConfig({
   testDir: '.',
+  // The directory also holds vitest files, which Playwright cannot load.
+  testMatch: 'performance.spec.ts',
   fullyParallel: false,
   workers: 1,
   retries: 0,

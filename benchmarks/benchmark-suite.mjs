@@ -106,8 +106,18 @@ export async function installBenchmarkFixture(options) {
         progressTx.objectStore('playback-progress').getAll(),
       );
     }
-    const backupTx = db.transaction('user-meta', 'readwrite');
-    backupTx.objectStore('user-meta').put({
+    const hasParental = db.objectStoreNames.contains('parental-control');
+    // The device's own Parental Controls record is read, backed up, and removed
+    // in one transaction, so no suite runs behind the user's PIN or locks and
+    // a concurrent app write can't slip between the read and the delete. The
+    // pending-backup check repeats here so a concurrent install can't replace
+    // the backup with an already-emptied parental store.
+    const backupTx = db.transaction(
+      hasParental ? [...backupStores, 'parental-control'] : backupStores,
+      'readwrite',
+    );
+    let pendingBackup = false;
+    const putBackup = (parentalConfig) => backupTx.objectStore('user-meta').put({
       key: options.backupKey,
       data: {
         localStorage: backup,
@@ -115,9 +125,42 @@ export async function installBenchmarkFixture(options) {
         cacheMeta,
         recentlyWatched,
         playbackProgress,
+        parentalConfig,
       },
     });
-    await transactionDone(backupTx);
+    const backupParental = () => {
+      if (!hasParental) {
+        putBackup(null);
+        return;
+      }
+      const parental = backupTx.objectStore('parental-control');
+      const read = parental.get('config');
+      read.onsuccess = () => {
+        putBackup(read.result || null);
+        parental.delete('config');
+      };
+    };
+    const userMarker = backupTx.objectStore('user-meta').get(options.backupKey);
+    const legacyMarker = backupTx.objectStore('catalog-cache').get(options.backupKey);
+    legacyMarker.onsuccess = () => {
+      if (userMarker.result || legacyMarker.result) {
+        pendingBackup = true;
+        backupTx.abort();
+        return;
+      }
+      backupParental();
+    };
+    try {
+      await transactionDone(backupTx);
+    } catch (error) {
+      db.close();
+      if (pendingBackup) {
+        throw new Error(
+          'An interrupted TV benchmark backup exists. Run npm run benchmark:tv:cleanup first.',
+        );
+      }
+      throw error;
+    }
 
     let firstUrl = 'http://host/0';
     try {
@@ -633,6 +676,7 @@ export async function cleanupBenchmarkFixture(options) {
       'playback-progress',
       'cache-meta',
       'user-meta',
+      'parental-control',
     ]) {
       if (db.objectStoreNames.contains(store)) cleanupStores.push(store);
     }
@@ -657,6 +701,12 @@ export async function cleanupBenchmarkFixture(options) {
       const savedPlaylist = backupEntry?.data?.playlistCache;
       if (savedPlaylist) playlist.put(savedPlaylist);
       else playlist.delete('combined-v3');
+    }
+    if (cleanupStores.indexOf('parental-control') >= 0
+        && backupEntry?.data && 'parentalConfig' in backupEntry.data) {
+      const parental = cleanupTx.objectStore('parental-control');
+      if (backupEntry.data.parentalConfig) parental.put(backupEntry.data.parentalConfig);
+      else parental.delete('config');
     }
     if (cleanupStores.indexOf('cache-meta') >= 0
         && Array.isArray(backupEntry?.data?.cacheMeta)) {
@@ -2003,6 +2053,229 @@ export async function runGroupBenchmark(options) {
   return { channelList, sidebar, epg };
 }
 
+// Expects the Parental Controls manager open on the Live source. VOD category
+// index 6 is the fixture's category 13, which holds every movie.
+export async function runParentalBenchmark(options) {
+  const round = (value) => Math.round(value * 10) / 10;
+  const distribution = (values) => {
+    const sorted = values.slice().sort((a, b) => a - b);
+    const sum = values.reduce((total, value) => total + value, 0);
+    return {
+      p50: round(sorted[Math.floor(sorted.length * 0.5)] || 0),
+      p95: round(sorted[Math.min(
+        sorted.length - 1,
+        Math.floor(sorted.length * 0.95),
+      )] || 0),
+      max: round(sorted[sorted.length - 1] || 0),
+      mean: round(sum / Math.max(1, values.length)),
+    };
+  };
+  const root = document.querySelector('#view-parental-controls');
+  if (!root) throw new Error('Parental Controls view is missing');
+  const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+  const count = (selector) => root.querySelectorAll(selector).length;
+  // A column shows its header note only once its rows have loaded.
+  const loaded = (kind) => !!root.querySelector(`.parental-column-${kind} .parental-column-note`);
+  const waitUntil = async (ready, name, timeout = 120_000) => {
+    const started = performance.now();
+    while (!ready()) {
+      if (performance.now() - started > timeout) throw new Error(`Timed out waiting for ${name}`);
+      await frame();
+    }
+  };
+  const settled = () => loaded('group') && loaded('item');
+  const key = (name, code) => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: name, keyCode: code, bubbles: true }));
+  };
+  const click = (selector) => {
+    const target = root.querySelector(selector);
+    if (!target) throw new Error(`Missing ${selector}`);
+    target.click();
+  };
+  const navigate = async (samples) => {
+    const handler = [];
+    const frames = [];
+    for (let index = 0; index < samples; index++) {
+      const started = performance.now();
+      key('ArrowDown', 40);
+      handler.push(performance.now() - started);
+      await frame();
+      frames.push(performance.now() - started);
+    }
+    return { ...distribution(handler), frame: distribution(frames) };
+  };
+  const timed = async (action, ready, name) => {
+    const started = performance.now();
+    action();
+    const handlerMs = performance.now() - started;
+    await waitUntil(ready, name);
+    await frame();
+    return { handlerMs: round(handlerMs), readyMs: round(performance.now() - started) };
+  };
+  const toggle = async (restore = true) => {
+    const focused = root.querySelector('[data-parental-item].focused');
+    if (!focused) throw new Error('No focused parental item');
+    const started = performance.now();
+    key('Enter', 13);
+    const handlerMs = performance.now() - started;
+    await frame();
+    const frameMs = performance.now() - started;
+    // Restore the rule so later suites run without locks.
+    if (restore) {
+      key('Enter', 13);
+      await frame();
+    }
+    return { handlerMs: round(handlerMs), frameMs: round(frameMs) };
+  };
+  const mounted = () => ({
+    groups: count('[data-parental-group]'),
+    items: count('[data-parental-item]'),
+    groupExtent: parseFloat(
+      root.querySelector('[data-parental-list="group"] .parental-spacer')?.style.height || '0',
+    ),
+    itemExtent: parseFloat(
+      root.querySelector('[data-parental-list="item"] .parental-spacer')?.style.height || '0',
+    ),
+  });
+  const samples = options.keySamples;
+
+  await waitUntil(settled, 'Live groups');
+  const live = {};
+  live.groupSelect = await timed(
+    () => click('[data-parental-group="5"]'),
+    () => loaded('item') && count('[data-parental-item]') > 0,
+    'Live group items',
+  );
+  live.rendered = mounted();
+  key('ArrowRight', 39);
+  await frame();
+  // Keep one item locked so the group stays Partly locked while navigating.
+  const lockedItem = root.querySelector('[data-parental-item].focused')?.dataset.parentalItem;
+  live.toggle = await toggle(false);
+  live.navigation = await navigate(samples);
+  for (let index = 0; index < samples; index++) {
+    key('ArrowUp', 38);
+    await frame();
+  }
+  if (root.querySelector('[data-parental-item].focused')?.dataset.parentalItem !== lockedItem) {
+    throw new Error(`Expected Live item ${String(lockedItem)} focused`);
+  }
+  key('Enter', 13);
+  await frame();
+  if (root.querySelector('.parental-exception')) throw new Error('Live item lock was not restored');
+  key('ArrowLeft', 37);
+  await frame();
+  live.groupNavigation = await navigate(samples);
+  await waitUntil(settled, 'Live items after navigation');
+
+  const vod = {};
+  vod.open = await timed(
+    () => click('[data-key="parental-kind:vod"]'),
+    () => loaded('group'),
+    'VOD categories',
+  );
+  await waitUntil(() => loaded('item'), 'VOD first category');
+  vod.itemsSelect = await timed(
+    () => click('[data-parental-group="6"]'),
+    () => loaded('item') && count('[data-parental-item]') > 0,
+    'VOD category items',
+  );
+  vod.rendered = mounted();
+  key('ArrowRight', 39);
+  await frame();
+  vod.navigation = await navigate(samples);
+  vod.toggle = await toggle();
+  key('ArrowLeft', 37);
+  await frame();
+  vod.groupNavigation = await navigate(samples);
+  // Leave only after the debounced load for the last category settles.
+  await waitUntil(() => loaded('item'), 'VOD items after navigation');
+  return { live, vod };
+}
+
+export function assertParentalBenchmark(report, scale) {
+  const bounded = (name, value) => {
+    if (!(value > 0 && value < 60)) {
+      throw new Error(`Parental ${name} mounted ${String(value)} rows; expected 1-59`);
+    }
+  };
+  bounded('Live groups', report.live.rendered.groups);
+  bounded('Live items', report.live.rendered.items);
+  bounded('VOD categories', report.vod.rendered.groups);
+  bounded('VOD items', report.vod.rendered.items);
+  if (report.vod.rendered.itemExtent !== scale * 64) {
+    throw new Error(`Expected a ${String(scale * 64)}px VOD item extent, received ${String(report.vod.rendered.itemExtent)}`);
+  }
+  if (report.vod.rendered.groupExtent !== scale * 64) {
+    throw new Error(`Expected a ${String(scale * 64)}px VOD category extent, received ${String(report.vod.rendered.groupExtent)}`);
+  }
+}
+
+// The TV keeps its own Parental Controls record (PIN and locks) in the app's
+// IndexedDB; the runner takes it out for the run and puts it back afterwards.
+// Drops the throwaway Parental Controls record the benchmark created; the
+// device's own record comes back with the fixture backup.
+export async function clearParentalConfig() {
+  const db = await new Promise((resolve, reject) => {
+    const request = indexedDB.open('iptv');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('parental-control', 'readwrite');
+      tx.objectStore('parental-control').delete('config');
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// Creates a PIN through the Settings UI, as the desktop run does with Playwright.
+export async function openParentalControls({ pin }) {
+  const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+  const waitUntil = async (ready, name, timeout = 30_000) => {
+    const started = performance.now();
+    while (!ready()) {
+      if (performance.now() - started > timeout) throw new Error(`Timed out waiting for ${name}`);
+      await frame();
+    }
+  };
+  const visible = (element) => !!element && element.getClientRects().length > 0;
+  const required = (selector) => {
+    const element = document.querySelector(selector);
+    if (!element) throw new Error(`Missing ${selector}`);
+    return element;
+  };
+  // The tab bar hit-tests the click position, so click at the element's center.
+  const click = (selector) => {
+    const rect = required(selector).getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('click', {
+      bubbles: true, cancelable: true, clientX: x, clientY: y,
+    }));
+  };
+  click('.tab-bar-item[data-section="settings"]');
+  await waitUntil(() => visible(document.querySelector('#manage-parental-controls')), 'Settings');
+  click('#manage-parental-controls');
+  const input = () => document.querySelector('.parental-pin-prompt .parental-pin-input');
+  const enter = () => {
+    const field = input();
+    field.value = pin;
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  await waitUntil(() => visible(input()), 'PIN prompt');
+  enter();
+  // The prompt clears the field when it asks to confirm the PIN.
+  await waitUntil(() => visible(input()) && input().value === '', 'PIN confirmation');
+  enter();
+  await waitUntil(() => visible(document.querySelector('#view-parental-controls')), 'Parental Controls');
+}
+
 export function summarizeRetainedMemory(beforeBytes, cycleBytes) {
   const toMiB = (value) => Math.round(value / 1_048_576 * 10) / 10;
   const samplesMiB = cycleBytes.map(toMiB);
@@ -2326,6 +2599,12 @@ export async function runBenchmarkSuites(options) {
     recentGroup.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     key('Enter', 13);
     await waitFor('.recent-item');
+    // Selecting a group keeps focus on it; Right moves into its list.
+    key('ArrowRight', 39);
+    await settle();
+    if (!document.querySelector('.recent-item.focused')) {
+      throw new Error('Recently Watched did not take focus');
+    }
     const recentlyWatched = {
       rendered: document.querySelectorAll('.recent-item').length,
       liveRendered: document.querySelectorAll('.recent-live').length,

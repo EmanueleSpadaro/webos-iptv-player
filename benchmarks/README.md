@@ -68,6 +68,7 @@ lifetime effects vary between runs.
 | Groups | Repeated All/large/small switching plus a separate 50,000-unique-group reload covering Channel List, Sidebar, and EPG group navigation |
 | Movies | Category load, 50,000-item grid load, DOM size, and navigation |
 | Series | Category/grid/detail load, grid navigation, and episode navigation |
+| Parental Controls | Live group selection and the 50,000-category VOD manager — category/item load, bounded DOM and extents in both columns, item and group navigation, and lock toggling |
 | Search | Separate Xtream and M3U-only reloads with program-index construction and broad/sparse/no-match query distributions |
 | Interaction transitions | Rapid wheel-to-D-pad handoff, trusted Magic Remote-style pointer activation, connected focus, EPG channel/date changes, and non-empty virtual windows |
 | Frame/long tasks | Action-to-next-frame distributions, frames over 50ms, and Long Tasks observed during the suites |
@@ -211,7 +212,9 @@ isolated benchmark state, preventing reminders, favorites, Recently Watched,
 Last Channel, or future storage keys from being pruned or overwritten. A
 `finally` cleanup clears benchmark state, restores every original key, deletes
 only benchmark EPG/catalog records, reloads the app, and reports the restored
-channel count. If a run is interrupted, use:
+channel count. The same backup also holds the TV's own Parental Controls
+record, PIN included, which is removed for the run, so the parental suite sets
+a throwaway PIN. If a run is interrupted, use:
 
 ```bash
 npm run benchmark:tv:cleanup

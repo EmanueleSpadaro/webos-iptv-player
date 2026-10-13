@@ -74,6 +74,18 @@ const metricPaths = [
   'search.m3u.queries.programsSparse.p50',
   'search.m3u.queries.noMatch.p50',
   'interactions.groupSwitching.p95',
+  'parental.live.navigation.p95',
+  'parental.live.navigation.frame.p95',
+  'parental.live.groupNavigation.p95',
+  'parental.live.groupNavigation.frame.p95',
+  'parental.live.toggle.handlerMs',
+  'parental.vod.open.readyMs',
+  'parental.vod.itemsSelect.readyMs',
+  'parental.vod.navigation.p95',
+  'parental.vod.navigation.frame.p95',
+  'parental.vod.groupNavigation.p95',
+  'parental.vod.groupNavigation.frame.p95',
+  'parental.vod.toggle.handlerMs',
 ];
 
 function metric(report, metricPath) {

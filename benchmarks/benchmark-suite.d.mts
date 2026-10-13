@@ -358,3 +358,17 @@ export function assertColdLoadBenchmark(
   report: { readyMs: number; rendered: number; channels: number },
   scale: number,
 ): void;
+
+export interface ParentalBenchmarkOptions {
+  keySamples: number;
+}
+
+export function runParentalBenchmark(
+  options: ParentalBenchmarkOptions,
+): Promise<Record<string, any>>;
+
+export function assertParentalBenchmark(report: Record<string, any>, scale: number): void;
+
+export function clearParentalConfig(): Promise<void>;
+
+export function openParentalControls(options: { pin: string }): Promise<void>;

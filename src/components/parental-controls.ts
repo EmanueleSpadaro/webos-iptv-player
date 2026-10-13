@@ -16,6 +16,8 @@ import type {
 } from '../types';
 import { html, raw, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
+import { VirtualList } from '../utils/virtual-list';
+import { VirtualScrollGuard } from '../utils/virtual-scroll';
 import { SpatialNav } from '../navigation/spatial-nav';
 import { StorageService } from '../services/storage-service';
 import { PlaylistService } from '../services/playlist-service';
@@ -44,6 +46,14 @@ import { isAdultGroupName } from './group-icon';
 
 const log = createLogger('ParentalControls');
 
+// A 58px row plus its 6px bottom margin; the list's 4px top padding sits above row 0.
+const ROW_STRIDE = 64;
+const LIST_PADDING = 4;
+const LIST_OVERSCAN = 8;
+const FALLBACK_LIST_HEIGHT = 600;
+
+type ListKind = 'group' | 'item';
+
 type SourceKind = 'live' | 'vod' | 'series';
 
 interface SourceEntry {
@@ -59,6 +69,7 @@ interface GroupEntry {
   // Adult by name or source metadata; offered for locking, never locked silently.
   suggested: boolean;
   target: ParentalParentTarget;
+  ruleKey?: string;
   // Live groups know their channels up front, so a partial lock can show a count.
   members: ItemEntry[] | null;
 }
@@ -67,16 +78,33 @@ interface ItemEntry {
   key: string;
   name: string;
   target: ParentalItemTarget;
+  ruleKey?: string;
   // A channel merged from several sources is locked by any of its groups.
   parents?: Array<LiveGroupTarget | CatalogCategoryTarget>;
+}
+
+interface RuleSummary {
+  lockedGroups: number;
+  suggestions: GroupEntry[];
+  mixedGroups: Set<string>;
+  exceptions: number;
 }
 
 function groupTarget(group: GroupEntry): LiveGroupTarget | CatalogCategoryTarget {
   return group.target as LiveGroupTarget | CatalogCategoryTarget;
 }
 
+// Built on first use: most rows of a 50,000-row catalog never need it.
+function ruleKey(entry: GroupEntry | ItemEntry): string {
+  return entry.ruleKey ?? (entry.ruleKey = parentalTargetKey(entry.target));
+}
+
 function itemTarget(item: ItemEntry): LiveChannelTarget | CatalogItemTarget {
   return item.target as LiveChannelTarget | CatalogItemTarget;
+}
+
+function sameInputs(a: unknown[], b: unknown[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 // Playlist conventions for adult entries: `adult="1"` or a `parent-code`.
@@ -111,9 +139,28 @@ export class ParentalControls {
   // Item rule key -> owning group key, so "Mixed" holds for every group, not
   // only the one whose items are loaded.
   private memberGroups = new Map<string, string>();
-  private mixedGroups = new Set<string>();
+  private memberGroupsRevision = 0;
+  // A wheel scroll can unmount the focused row; D-pad resumes from here.
+  private detachedRow: { kind: ListKind; index: number; entries: unknown[] } | null = null;
+  private groupSummaryCache: (Omit<RuleSummary, 'exceptions'> & { inputs: unknown[] }) | null = null;
+  private exceptionCache: { inputs: unknown[]; exceptions: number } | null = null;
+  private lockedCounts = new WeakMap<ItemEntry[], { revision: number; locked: number }>();
+  private groupsByKeyFor: GroupEntry[] | null = null;
+  private groupsByKey = new Map<string, GroupEntry>();
   private tab: 'rules' | 'options' = 'rules';
   private readonly confirmationPrompt = new ConfirmationPrompt();
+  private readonly groupVirtualizer = new VirtualList({
+    itemSize: ROW_STRIDE,
+    overscan: LIST_OVERSCAN,
+    fallbackViewportSize: FALLBACK_LIST_HEIGHT,
+  });
+  private readonly itemVirtualizer = new VirtualList({
+    itemSize: ROW_STRIDE,
+    overscan: LIST_OVERSCAN,
+    fallbackViewportSize: FALLBACK_LIST_HEIGHT,
+  });
+  private readonly scrollGuard = new VirtualScrollGuard();
+  private scrollFrame: number | null = null;
 
   constructor(
     private container: HTMLElement,
@@ -136,10 +183,26 @@ export class ParentalControls {
       if (!target) return;
       const group = target.dataset.parentalGroup;
       const selecting = group !== undefined && Number(group) !== this.groupIndex;
+      // A click is a deliberate choice, so its items load without the D-pad debounce.
+      if (selecting) this.setCurrentGroup(Number(group), true);
       this.nav.focus(target);
-      if (selecting) this.setCurrentGroup(Number(group));
-      else this.activate(target);
+      if (!selecting) this.activate(target);
     });
+    this.container.addEventListener('scroll', (event: Event) => {
+      const list = event.target;
+      if (!(list instanceof HTMLElement)) return;
+      const kind = list.dataset.parentalList;
+      if (kind !== 'group' && kind !== 'item') return;
+      const virtualizer = this.virtualizer(kind);
+      const offset = this.scrollGuard.readUserOffset(list, 'vertical');
+      if (offset === null || Math.abs(offset - virtualizer.scrollOffset) < 1) return;
+      virtualizer.setScrollOffset(offset);
+      if (this.scrollFrame !== null) return;
+      this.scrollFrame = requestAnimationFrame(() => {
+        this.scrollFrame = null;
+        this.render();
+      });
+    }, true);
   }
 
   open(): void {
@@ -197,12 +260,15 @@ export class ParentalControls {
       this.onBack();
       return;
     }
+    if (action === 'left' || action === 'right' || action === 'select') {
+      if (!this.nav.focused) this.restoreDetachedRow();
+    }
     if (action === 'left' || action === 'right') {
       if (!this.hopColumn(action)) this.nav.move(action);
       return;
     }
     if (action === 'up' || action === 'down') {
-      this.nav.move(action);
+      if (!this.moveInList(action === 'up' ? -1 : 1)) this.nav.move(action);
       return;
     }
     if (action === 'select') {
@@ -321,7 +387,9 @@ export class ParentalControls {
     if (source.kind === 'live') this.liveKey = source.key;
     if (source.account.source === 'xtream') this.xtreamId = source.account.id;
     this.groups = [];
+    this.groupVirtualizer.setScrollOffset(0);
     this.memberGroups = new Map();
+    this.memberGroupsRevision++;
     this.resetItems();
     this.groupsLoading = true;
     this.render();
@@ -332,18 +400,15 @@ export class ParentalControls {
           const channels = PlaylistService.getByGroup(`source:${name}`, source.account.id);
           const key = `live:${source.account.id}:${groupKey}`;
           const members = channels.map(channel => this.liveItem(channel));
-          for (const member of members) this.memberGroups.set(parentalTargetKey(member.target), key);
+          for (const member of members) this.setMemberGroup(ruleKey(member), key);
+          const target: LiveGroupTarget = { kind: 'live-group', playlistId: source.account.id, groupKey };
           return {
             key,
             name: groupDisplayLabel(name),
             count: channels.length,
             suggested: isAdultGroupName(name) || channels.some(isAdultChannel),
-            target: {
-              kind: 'live-group',
-              playlistId: source.account.id,
-              groupKey,
-            } satisfies LiveGroupTarget,
-            members,
+            target,
+                  members,
           };
         });
         this.adoptLiveSource(source.account, this.groupTargets());
@@ -397,9 +462,9 @@ export class ParentalControls {
           .map(item => ({ entry: this.seriesItem(item), categoryId: item.categoryId }));
       if (signal.aborted) return;
       for (const { entry, categoryId } of items) {
-        const key = parentalTargetKey(entry.target);
+        const key = ruleKey(entry);
         if (!this.memberGroups.has(key)) {
-          this.memberGroups.set(key, `${source.kind}:${source.account.id}:${categoryId}`);
+          this.setMemberGroup(key, `${source.kind}:${source.account.id}:${categoryId}`);
         }
       }
       this.render();
@@ -415,16 +480,17 @@ export class ParentalControls {
     source: SourceEntry,
     category: VodCategory | SeriesCategory,
   ): GroupEntry {
+    const target: CatalogCategoryTarget = {
+      kind: source.kind === 'vod' ? 'vod-category' : 'series-category',
+      accountId: source.account.id,
+      categoryId: category.id,
+    };
     return {
       key: `${source.kind}:${source.account.id}:${category.id}`,
       name: category.name,
       count: null,
       suggested: isAdultGroupName(category.name),
-      target: {
-        kind: source.kind === 'vod' ? 'vod-category' : 'series-category',
-        accountId: source.account.id,
-        categoryId: category.id,
-      } satisfies CatalogCategoryTarget,
+      target,
       members: null,
     };
   }
@@ -439,6 +505,7 @@ export class ParentalControls {
     this.itemsLoading = false;
     this.groupIndex = -1;
     this.items = [];
+    this.itemVirtualizer.setScrollOffset(0);
   }
 
   private onFocusChange(el: HTMLElement | null): void {
@@ -455,7 +522,7 @@ export class ParentalControls {
     if (areaChanged && !rendered) this.render();
   }
 
-  private setCurrentGroup(index: number): boolean {
+  private setCurrentGroup(index: number, immediate = false): boolean {
     const group = this.groups[index];
     if (!group || index === this.groupIndex) return false;
     this.groupIndex = index;
@@ -463,7 +530,12 @@ export class ParentalControls {
     this.itemsLoad = null;
     this.itemsGroupKey = null;
     this.items = [];
+    this.itemVirtualizer.setScrollOffset(0);
     this.itemsLoading = true;
+    if (immediate) {
+      void this.loadItems(index);
+      return true;
+    }
     this.render();
     if (this.itemsTimer) clearTimeout(this.itemsTimer);
     // Debounced so scrolling through catalog categories doesn't fetch each one.
@@ -486,8 +558,10 @@ export class ParentalControls {
     this.itemsController = controller;
     this.itemsGroupKey = group.key;
     this.items = [];
+    this.itemVirtualizer.setScrollOffset(0);
     this.itemsLoading = true;
     this.render();
+    const startedAt = Date.now();
     this.itemsLoad = (async () => {
       try {
         let items: ItemEntry[];
@@ -508,8 +582,17 @@ export class ParentalControls {
               .map(item => this.seriesItem(item));
         }
         if (!controller.signal.aborted) {
+          log.info('Parental items loaded', 'event=parental.manager.items',
+            `source=${source.key}`, `items=${items.length}`,
+            `elapsedMs=${Date.now() - startedAt}`);
           this.items = items;
-          for (const item of items) this.memberGroups.set(parentalTargetKey(item.target), group.key);
+          // Only ruled items feed the summaries; a rule set later maps its item then.
+          if (ParentalControlService.hasItemRules()) {
+            for (const item of items) {
+              const key = ruleKey(item);
+              if (ParentalControlService.itemRuleByKey(key)) this.setMemberGroup(key, group.key);
+            }
+          }
         }
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -527,27 +610,31 @@ export class ParentalControls {
   }
 
   private liveItem(channel: Channel): ItemEntry {
+    const key = channelKey(channel);
+    const target: LiveChannelTarget = { kind: 'live-channel', channelKey: key };
     return {
-      key: `live:${channelKey(channel)}`,
+      key: `live:${key}`,
       name: channel.name,
-      target: { kind: 'live-channel', channelKey: channelKey(channel) },
+      target,
       parents: liveParentalRequest(channel).parents,
     };
   }
 
   private vodItem(item: VodItem): ItemEntry {
+    const target: CatalogItemTarget = { kind: 'vod-item', accountId: item.accountId, itemId: item.streamId };
     return {
       key: `vod:${item.accountId}:${item.streamId}`,
       name: item.name,
-      target: { kind: 'vod-item', accountId: item.accountId, itemId: item.streamId },
+      target,
     };
   }
 
   private seriesItem(item: SeriesItem): ItemEntry {
+    const target: CatalogItemTarget = { kind: 'series-item', accountId: item.accountId, itemId: item.seriesId };
     return {
       key: `series:${item.accountId}:${item.seriesId}`,
       name: item.name,
-      target: { kind: 'series-item', accountId: item.accountId, itemId: item.seriesId },
+      target,
     };
   }
 
@@ -635,8 +722,10 @@ export class ParentalControls {
         this.itemParents(item, group),
         !this.isItemLocked(item, group),
       );
+      this.setMemberGroup(ruleKey(item), group.key);
       this.render();
-      this.focusKey(item.key);
+      // A keyed morph keeps the row; a late refocus would undo keys pressed since.
+      if (this.nav.focused?.dataset.key !== item.key) this.focusKey(item.key);
       return;
     }
   }
@@ -682,8 +771,67 @@ export class ParentalControls {
     this.render();
   }
 
+  // Only items with a rule feed the summary, so only they invalidate it.
+  private setMemberGroup(itemKey: string, groupKey: string): void {
+    if (this.memberGroups.get(itemKey) === groupKey) return;
+    this.memberGroups.set(itemKey, groupKey);
+    if (ParentalControlService.itemRuleByKey(itemKey)) this.memberGroupsRevision++;
+  }
+
   private pendingSuggestions(): GroupEntry[] {
-    return this.groups.filter(group => group.suggested && !this.isGroupLocked(group));
+    return this.ruleSummary().suggestions;
+  }
+
+  // Each pass is O(groups) or O(items); at catalog scale that would dominate
+  // every key press, so each reruns only when its own inputs change.
+  private ruleSummary(): RuleSummary {
+    const revision = ParentalControlService.rulesRevision;
+    const groupInputs: unknown[] = [this.groups, this.memberGroupsRevision, revision];
+    let groups = this.groupSummaryCache;
+    if (!groups || !sameInputs(groups.inputs, groupInputs)) {
+      let lockedGroups = 0;
+      const suggestions: GroupEntry[] = [];
+      for (const group of this.groups) {
+        if (this.isGroupLocked(group)) lockedGroups++;
+        else if (group.suggested) suggestions.push(group);
+      }
+      groups = { inputs: groupInputs, lockedGroups, suggestions, mixedGroups: this.computeMixedGroups() };
+      this.groupSummaryCache = groups;
+    }
+    const currentGroup = this.groups[this.groupIndex];
+    const itemInputs: unknown[] = [this.items, currentGroup, this.itemsLoading, revision];
+    let items = this.exceptionCache;
+    if (!items || !sameInputs(items.inputs, itemInputs)) {
+      items = { inputs: itemInputs, exceptions: this.countExceptions(currentGroup) };
+      this.exceptionCache = items;
+    }
+    return { ...groups, exceptions: items.exceptions };
+  }
+
+  private countExceptions(group: GroupEntry | undefined): number {
+    if (!group || this.itemsLoading) return 0;
+    const groupLocked = this.isGroupLocked(group);
+    const inherited = ParentalControlService.parentsLocked([groupTarget(group)]);
+    if (!group.members) {
+      // Catalog items inherit only from this category, so only their rules
+      // (and every loaded item maps to it) can differ from it.
+      let ruled = 0;
+      let count = 0;
+      for (const [key, rule] of ParentalControlService.itemRuleEntries()) {
+        if (this.memberGroups.get(key) !== group.key) continue;
+        ruled++;
+        if ((rule === 'protect') !== groupLocked) count++;
+      }
+      return inherited === groupLocked ? count : count + this.items.length - ruled;
+    }
+    let count = 0;
+    for (const item of this.items) {
+      const rule = ParentalControlService.itemRuleByKey(ruleKey(item));
+      const locked = rule ? rule === 'protect'
+        : item.parents ? ParentalControlService.parentsLocked(item.parents) : inherited;
+      if (locked !== groupLocked) count++;
+    }
+    return count;
   }
 
   private lockSuggested(): void {
@@ -706,33 +854,46 @@ export class ParentalControls {
   // Exceptions are item rules that differ from their group's lock; a stale
   // rule matching the group is harmless and doesn't count.
   private computeMixedGroups(): Set<string> {
-    const locked = new Map(this.groups.map(group => [group.key, this.isGroupLocked(group)]));
     const mixed = new Set<string>();
-    for (const [key, rule] of ParentalControlService.itemRuleEntries()) {
+    const rules = ParentalControlService.itemRuleEntries();
+    if (!rules.length) return mixed;
+    if (this.groupsByKeyFor !== this.groups) {
+      this.groupsByKeyFor = this.groups;
+      this.groupsByKey = new Map(this.groups.map(group => [group.key, group]));
+    }
+    for (const [key, rule] of rules) {
       const groupKey = this.memberGroups.get(key);
-      if (groupKey !== undefined && locked.has(groupKey)
-        && (rule === 'allow') === locked.get(groupKey)) {
-        mixed.add(groupKey);
+      const group = groupKey === undefined ? undefined : this.groupsByKey.get(groupKey);
+      if (group && !mixed.has(group.key) && (rule === 'allow') === this.isGroupLocked(group)) {
+        mixed.add(group.key);
       }
     }
     return mixed;
   }
 
   private hasExceptions(group: GroupEntry): boolean {
-    return this.mixedGroups.has(group.key);
+    return this.ruleSummary().mixedGroups.has(group.key);
   }
 
   private groupState(group: GroupEntry): string {
     if (this.hasExceptions(group)) {
       if (!group.members) return t('parental.partlyLocked');
-      const locked = group.members.filter(member => this.isItemLocked(member, group)).length;
-      return t('parental.lockedOf', { locked, total: group.members.length });
+      return t('parental.lockedOf', { locked: this.lockedCount(group, group.members), total: group.members.length });
     }
     return t(this.isGroupLocked(group) ? 'parental.locked' : 'parental.notLocked');
   }
 
+  private lockedCount(group: GroupEntry, members: ItemEntry[]): number {
+    const revision = ParentalControlService.rulesRevision;
+    const cached = this.lockedCounts.get(members);
+    if (cached?.revision === revision) return cached.locked;
+    const locked = members.filter(member => this.isItemLocked(member, group)).length;
+    this.lockedCounts.set(members, { revision, locked });
+    return locked;
+  }
+
   private isGroupLocked(group: GroupEntry): boolean {
-    return ParentalControlService.groupProtected(groupTarget(group));
+    return ParentalControlService.groupProtectedByKey(ruleKey(group));
   }
 
   private isItemLocked(item: ItemEntry, group: GroupEntry | undefined): boolean {
@@ -747,7 +908,7 @@ export class ParentalControls {
   }
 
   private render(): void {
-    this.mixedGroups = this.computeMixedGroups();
+    const focusedRow = this.focusedRow();
     const currentGroup = this.groups[this.groupIndex];
     const tabs: Array<{ id: 'rules' | 'options'; label: string }> = [
       { id: 'rules', label: t('parental.tabLocks') },
@@ -786,8 +947,11 @@ export class ParentalControls {
         </div>
       </div>
     `);
+    this.syncListScroll('group');
+    this.syncListScroll('item');
     // morph() resets `class` from the template, dropping the nav highlight.
     this.nav.clearDetachedFocus();
+    if (focusedRow && !this.nav.focused) this.detachedRow = focusedRow;
     if (this.nav.focused) this.nav.focused.classList.add('focused');
     this.mountAccount();
   }
@@ -831,11 +995,8 @@ export class ParentalControls {
       .map((source, index) => ({ source, index }))
       .filter(({ source }) => source.kind === 'live');
     const groupRules = ParentalControlService.groupRuleKeys();
-    const lockedGroups = this.groups.filter(group => this.isGroupLocked(group)).length;
+    const { lockedGroups, exceptions } = this.ruleSummary();
     const groupLocked = !!currentGroup && this.isGroupLocked(currentGroup);
-    const exceptions = currentGroup && !this.itemsLoading
-      ? this.items.filter(item => this.isItemLocked(item, currentGroup) !== groupLocked).length
-      : 0;
     return html`
       <div class="parental-toolbar">
         ${this.xtreamAccounts().length ? html`
@@ -879,11 +1040,11 @@ export class ParentalControls {
           this.groupsLoading
             ? [html`<div class="parental-empty">${t('common.loading')}</div>`]
             : this.groups.length
-              ? [this.suggestionRow(), ...this.groups.map((group, index) => {
+              ? [this.suggestionRow(), this.virtualRows('group', this.groups, (group, index, top) => {
                 const locked = this.isGroupLocked(group);
                 return html`
                 <button class="parental-row ${index === this.groupIndex ? 'active' : ''}"
-                        data-focusable data-key="${group.key}"
+                        style="top:${top}px" data-focusable data-key="${group.key}"
                         data-parental-group="${index}">
                   ${raw(lockBadge(locked ? 'locked' : 'unlocked'))}
                   <span>${group.name}</span>
@@ -908,10 +1069,11 @@ export class ParentalControls {
           this.itemsLoading
             ? [html`<div class="parental-empty">${t('common.loading')}</div>`]
             : this.items.length
-              ? this.items.map((item, index) => {
+              ? [this.virtualRows('item', this.items, (item, index, top) => {
                 const locked = this.isItemLocked(item, currentGroup);
                 return html`
-                <button class="parental-row" data-focusable data-key="${item.key}"
+                <button class="parental-row" style="top:${top}px"
+                        data-focusable data-key="${item.key}"
                         data-parental-item="${index}">
                   ${raw(lockBadge(locked ? 'locked' : 'unlocked'))}
                   <span>${item.name}</span>
@@ -921,7 +1083,7 @@ export class ParentalControls {
                   <strong class="${locked ? 'is-locked' : ''}">${
                     t(locked ? 'parental.locked' : 'parental.notLocked')}</strong>
                 </button>`;
-              })
+              })]
               : [html`<div class="parental-empty">${t('parental.selectGroup')}</div>`],
           'item')}
       </div>`;
@@ -988,8 +1150,126 @@ export class ParentalControls {
       <section class="parental-column parental-column-${kind}" data-nav-container
                data-nav-enter="last-focused">
         <header class="parental-column-head"><h3>${title}</h3>${note}</header>
-        <div class="parental-list">${rows}</div>
+        <div class="parental-list" data-parental-list="${kind}">${rows}</div>
       </section>`;
+  }
+
+  // Only the rows in view (plus overscan) are mounted; a 50,000-entry
+  // catalog would otherwise rebuild every row on each render.
+  private virtualRows<T>(
+    kind: ListKind,
+    entries: T[],
+    row: (entry: T, index: number, top: number) => Safe,
+  ): Safe {
+    const virtualizer = this.virtualizer(kind);
+    const suggestion = kind === 'group' && this.pendingSuggestions().length > 0;
+    virtualizer.setLeadingSize(LIST_PADDING + (suggestion ? ROW_STRIDE : 0));
+    const range = virtualizer.getRange(entries.length, this.listViewport(kind));
+    const rows: Safe[] = [];
+    for (let index = range.start; index < range.end; index++) {
+      rows.push(row(entries[index], index, virtualizer.getItemOffset(index)));
+    }
+    return html`
+      <div class="parental-spacer" data-key="parental-spacer:${kind}"
+           style="height:${virtualizer.getTotalSize(entries.length)}px">${rows}</div>`;
+  }
+
+  private virtualizer(kind: ListKind): VirtualList {
+    return kind === 'group' ? this.groupVirtualizer : this.itemVirtualizer;
+  }
+
+  private listElement(kind: ListKind): HTMLElement | null {
+    return this.container.querySelector<HTMLElement>(`[data-parental-list="${kind}"]`);
+  }
+
+  private listViewport(kind: ListKind): number {
+    return this.listElement(kind)?.clientHeight || FALLBACK_LIST_HEIGHT;
+  }
+
+  private syncListScroll(kind: ListKind): void {
+    const list = this.listElement(kind);
+    if (list) this.scrollGuard.syncOffset(list, 'vertical', this.virtualizer(kind).scrollOffset);
+  }
+
+  // Up/Down step by index, since the neighboring row may not be mounted yet.
+  private moveInList(delta: number): boolean {
+    const data = this.nav.focused?.dataset;
+    if (!data) return this.resumeDetachedRow(delta);
+    this.detachedRow = null;
+    if (data.parentalSuggest !== undefined) {
+      if (delta < 0 || !this.groups.length) return false;
+      this.focusRow('group', 0);
+      return true;
+    }
+    const kind: ListKind | null = data.parentalGroup !== undefined ? 'group'
+      : data.parentalItem !== undefined ? 'item' : null;
+    if (!kind) return false;
+    return this.stepInList(kind, Number(kind === 'group' ? data.parentalGroup : data.parentalItem), delta);
+  }
+
+  private stepInList(kind: ListKind, from: number, delta: number): boolean {
+    const index = from + delta;
+    if (kind === 'group' && index < 0 && this.pendingSuggestions().length) {
+      this.groupVirtualizer.setScrollOffset(0);
+      this.render();
+      const suggest = this.container.querySelector<HTMLElement>('[data-parental-suggest]');
+      if (suggest) this.nav.focus(suggest);
+      return true;
+    }
+    const count = kind === 'group' ? this.groups.length : this.items.length;
+    if (index < 0 || index >= count) return false;
+    this.focusRow(kind, index);
+    return true;
+  }
+
+  private focusedRow(): { kind: ListKind; index: number; entries: unknown[] } | null {
+    const data = this.nav.focused?.dataset;
+    if (data?.parentalGroup !== undefined) {
+      return { kind: 'group', index: Number(data.parentalGroup), entries: this.groups };
+    }
+    if (data?.parentalItem !== undefined) {
+      return { kind: 'item', index: Number(data.parentalItem), entries: this.items };
+    }
+    return null;
+  }
+
+  private takeDetachedRow(): { kind: ListKind; index: number } | null {
+    const row = this.detachedRow;
+    this.detachedRow = null;
+    if (!row || row.entries !== (row.kind === 'group' ? this.groups : this.items)) return null;
+    return row.index < row.entries.length ? row : null;
+  }
+
+  private resumeDetachedRow(delta: number): boolean {
+    const row = this.takeDetachedRow();
+    if (!row) return false;
+    if (this.stepInList(row.kind, row.index, delta)) return true;
+    // At a list end, remount the row so nav.move() leaves the list from it.
+    this.refocusRow(row.kind, row.index);
+    return false;
+  }
+
+  private restoreDetachedRow(): void {
+    const row = this.takeDetachedRow();
+    if (row) this.refocusRow(row.kind, row.index);
+  }
+
+  // Restoring focus isn't a D-pad choice, so it mustn't select the group.
+  private refocusRow(kind: ListKind, index: number): void {
+    this.hovering = true;
+    try {
+      this.focusRow(kind, index);
+    } finally {
+      this.hovering = false;
+    }
+  }
+
+  private focusRow(kind: ListKind, index: number): void {
+    this.virtualizer(kind).ensureVisible(index, this.listViewport(kind));
+    this.render();
+    const attribute = kind === 'group' ? 'data-parental-group' : 'data-parental-item';
+    const row = this.container.querySelector<HTMLElement>(`[${attribute}="${index}"]`);
+    if (row) this.nav.focus(row);
   }
 
   // Left/Right always crosses to the neighboring column — geometric nav would
@@ -998,8 +1278,14 @@ export class ParentalControls {
     const from = this.nav.focused;
     const column = from?.closest('.parental-column');
     if (!from || !column) return false;
-    const next = direction === 'left' ? column.previousElementSibling : column.nextElementSibling;
+    let next = direction === 'left' ? column.previousElementSibling : column.nextElementSibling;
     if (!next?.classList.contains('parental-column')) return false;
+    if (next.classList.contains('parental-column-group') && this.groupIndex >= 0
+        && this.groupVirtualizer.ensureVisible(this.groupIndex, this.listViewport('group'))) {
+      this.render();
+      next = this.container.querySelector('.parental-column-group');
+      if (!next) return false;
+    }
     const rows = Array.from(next.querySelectorAll<HTMLElement>('[data-focusable]'));
     if (!rows.length) return false;
     const center = (el: HTMLElement): number => {

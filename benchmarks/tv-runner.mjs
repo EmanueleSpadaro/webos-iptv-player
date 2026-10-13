@@ -36,6 +36,7 @@ import {
   runGroupBenchmark,
   summarizeRetainedMemory,
   assertRetainedMemory,
+  assertParentalBenchmark,
   assertXMLTVCatalogBenchmark,
   assertGroupBenchmarkScale,
   runBenchmarkSuites,
@@ -44,6 +45,9 @@ import {
   preparePointerBenchmark,
   assertBenchmarkScale,
   assertColdLoadBenchmark,
+  clearParentalConfig,
+  openParentalControls,
+  runParentalBenchmark,
 } from './benchmark-suite.mjs';
 
 const APP_ID = 'com.lennylxx.iptv';
@@ -257,11 +261,25 @@ async function cleanupFixture(client) {
   });
 }
 
+
 async function runSuites(client) {
   return evaluate(client, runBenchmarkSuites, {
     keySamples: KEY_SAMPLES,
     querySamples: QUERY_SAMPLES,
   });
+}
+
+// Sets a throwaway PIN through the UI and drops it afterwards. The TV's own
+// Parental Controls record, PIN included, is part of the fixture backup.
+async function runParental(client) {
+  try {
+    await reloadApp(client);
+    await evaluate(client, openParentalControls, { pin: '1234' });
+    return await evaluate(client, runParentalBenchmark, { keySamples: KEY_SAMPLES });
+  } finally {
+    await evaluate(client, clearParentalConfig);
+    await reloadApp(client);
+  }
 }
 
 async function runColdLoad(client) {
@@ -584,6 +602,8 @@ async function runTvBenchmark() {
       heapUsed: async () => (await client.call('Runtime.getHeapUsage')).usedSize,
     });
     assertXMLTVCatalogBenchmark(parsers.xmltvCatalog);
+    suites.parental = await runParental(client);
+    assertParentalBenchmark(suites.parental, SCALE);
     await evaluate(client, installM3USearchFixture);
     await reloadApp(client);
     suites.search.m3u = await evaluate(

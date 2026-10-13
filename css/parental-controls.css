@@ -210,6 +210,20 @@
   margin-bottom: 6px;
 }
 
+/* Group and item lists are virtualized: a fixed 58px row on a 64px stride
+   (see ROW_STRIDE in parental-controls.ts). */
+.parental-spacer {
+  position: relative;
+}
+
+.parental-spacer > .parental-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 58px;
+  margin-bottom: 0;
+}
+
 .parental-row.active {
   background: var(--bg-tertiary);
   border-color: var(--accent-dim);
@@ -261,6 +275,7 @@
 }
 
 .parental-row.parental-suggest-row {
+  height: 58px;
   color: var(--warning);
   font-weight: 600;
   border-color: var(--warning);

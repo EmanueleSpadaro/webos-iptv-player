@@ -27,6 +27,11 @@ interface IconRule {
   keywords: string[];
 }
 
+interface Keyword {
+  text: string;
+  prefix: boolean;
+}
+
 const ADULT_ICON = 'no_one_under_eighteen';
 
 const GROUP_ICON_RULES: IconRule[] = [
@@ -88,6 +93,8 @@ const GROUP_ICON_RULES: IconRule[] = [
 // unify Arabic alef/hamza/teh-marbuta/alef-maksura variants (so "الأطفال"
 // folds toward "اطفال"), and lowercase.
 function fold(value: string): string {
+  // Printable ASCII has nothing to fold but case; most catalog names are.
+  if (/^[\x20-\x7e]*$/.test(value)) return value.toLowerCase();
   return stripDiacritics(value.normalize('NFD')) // accents + Arabic tashkeel/hamza/madda
     .replace(/[آأإٱ]/gu, 'ا')        // آأإٱ -> ا
     .replace(/ى/gu, 'ي')             // ى -> ي
@@ -102,22 +109,25 @@ function tokenize(folded: string): string[] {
   return splitLetterNumberPlusTokens(folded);
 }
 
-// Pre-fold keywords once so rules can be authored with or without accents.
-const RULES: IconRule[] = GROUP_ICON_RULES.map(rule => ({
+// Fold and classify keywords once so rules can be authored with or without
+// accents. Alphabetic words (Latin/Cyrillic...) match as a token prefix
+// (catches inflections, avoids substring false-positives like "sport" in
+// "passport"). Phrases ("nat geo"), symbols ("18+"), CJK and Arabic match as a
+// substring: CJK has no word boundaries, and Arabic glues the definite
+// article/clitics ("ال") onto the front of words.
+const RULES: Array<{ icon: string; keywords: Keyword[] }> = GROUP_ICON_RULES.map(rule => ({
   icon: rule.icon,
-  keywords: rule.keywords.map(fold),
+  keywords: rule.keywords.map(fold).map(text => ({
+    text,
+    prefix: isLetterNumberWord(text) && !containsArabicOrHan(text),
+  })),
 }));
 
-function keywordHits(keyword: string, folded: string, tokens: string[]): boolean {
-  // Alphabetic word (Latin/Cyrillic...) -> token prefix (catches inflections,
-  // avoids substring false-positives like "sport" in "passport"). CJK and
-  // Arabic are excluded -> substring: CJK has no word boundaries, and Arabic
-  // glues the definite article/clitics ("ال") onto the front of words.
-  if (isLetterNumberWord(keyword) && !containsArabicOrHan(keyword)) {
-    return tokens.some(token => token.startsWith(keyword));
-  }
-  // Phrase ("nat geo"), symbol ("18+"), CJK or Arabic keyword -> substring.
-  return folded.includes(keyword);
+const ADULT_KEYWORDS = RULES.find(rule => rule.icon === ADULT_ICON)?.keywords ?? [];
+
+function keywordHits(keyword: Keyword, folded: string, tokens: string[]): boolean {
+  if (keyword.prefix) return tokens.some(token => token.startsWith(keyword.text));
+  return folded.includes(keyword.text);
 }
 
 /**
@@ -139,8 +149,7 @@ export function matchGroupIcon(group: string): string | null {
 export function isAdultGroupName(group: string): boolean {
   const folded = fold(group);
   const tokens = tokenize(folded);
-  const rule = RULES.find(r => r.icon === ADULT_ICON);
-  return !!rule && rule.keywords.some(keyword => keywordHits(keyword, folded, tokens));
+  return ADULT_KEYWORDS.some(keyword => keywordHits(keyword, folded, tokens));
 }
 
 function iconImg(name: string): string {

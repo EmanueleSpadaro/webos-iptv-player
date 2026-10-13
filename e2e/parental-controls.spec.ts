@@ -63,6 +63,41 @@ async function seedVodAccount(page: Page): Promise<void> {
   });
 }
 
+async function routeVodCatalog(
+  page: Page,
+  categories: Array<{ category_id: string; category_name: string }>,
+  streams: (category: string | null) => unknown[],
+): Promise<void> {
+  await page.route('**/get.php*', route =>
+    route.fulfill({ status: 200, contentType: 'application/x-mpegurl', body: '#EXTM3U\n' }));
+  await page.route('**/xmltv.php*', route =>
+    route.fulfill({ status: 200, contentType: 'application/xml', body: '<tv></tv>' }));
+  await page.route('**/player_api.php*', route => {
+    const url = new URL(route.request().url());
+    const action = url.searchParams.get('action');
+    const body = action === 'get_vod_categories' ? categories
+      : action === 'get_vod_streams' ? streams(url.searchParams.get('category_id'))
+        : action ? [] : {};
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_playlists', JSON.stringify([
+      { id: 'x1', name: 'X Account', url: 'http://host.example.com:8080',
+        source: 'xtream', xtream: { username: 'u', password: 'p' } },
+    ]));
+  });
+}
+
+async function createPinFromSettings(page: Page): Promise<void> {
+  await enterTab(page, 'settings');
+  await page.locator('#manage-parental-controls').click();
+  const prompt = page.locator('.parental-pin-prompt');
+  await prompt.locator('.parental-pin-input').fill('1234');
+  await expect(prompt.locator('h2')).toContainText('Confirm');
+  await prompt.locator('.parental-pin-input').fill('1234');
+  await expect(page.locator('#view-parental-controls')).toBeVisible();
+}
+
 async function chooseOption(page: Page, id: string, value: string): Promise<void> {
   await page.locator('[data-parental-tab="options"]').click();
   await page.locator(`#${id} [data-value="${value}"]`).click();
@@ -296,6 +331,30 @@ test('selects a group with the first click and keeps it while the pointer moves 
   for (const name of ['News', 'Movies']) {
     await expect(group(name).locator('.lock-badge')).toHaveClass(/is-locked/);
   }
+});
+
+test('a clicked group loads its items without the D-pad debounce', async ({ page }) => {
+  await openManagerWithNewPin(page);
+  const view = page.locator('#view-parental-controls');
+  // Frozen timers: only a load that skips the debounce can show the items.
+  await page.clock.install();
+  await page.clock.pauseAt(Date.now() + 1000);
+  await view.locator('[data-parental-group]').filter({ hasText: 'Movies' }).click();
+  await expect(view.locator('.parental-column-item [data-parental-item]').filter({ hasText: 'Channel Two' }))
+    .toBeVisible();
+});
+
+test('logs how many items a group loaded for tv.sh diag', async ({ page }) => {
+  const logs: string[] = [];
+  page.on('console', message => logs.push(message.text()));
+  await openManagerWithNewPin(page);
+  const view = page.locator('#view-parental-controls');
+  await view.locator('[data-parental-group]').filter({ hasText: 'Movies' }).click();
+  const rows = view.locator('.parental-column-item [data-parental-item]');
+  await expect(rows.filter({ hasText: 'Channel Two' })).toBeVisible();
+  const count = await rows.count();
+  const event = new RegExp(`\\bevent=parental\\.manager\\.items source=\\S+ items=${count} elapsedMs=\\d+`);
+  await expect.poll(() => logs.some(line => event.test(line))).toBe(true);
 });
 
 test('locks and unlocks everything in a group from the item column', async ({ page }) => {
@@ -692,6 +751,199 @@ test('keeps a catalog category Partly locked after the manager is reopened', asy
   // Cat A is current, so only the stored rules can tell that Cat B is Partly locked.
   await expect(group('Cat A')).toHaveClass(/\bactive\b/);
   await expect(group('Cat B')).toContainText('Partly locked');
+});
+
+test('the D-pad walks a long list while only nearby rows are mounted', async ({ page }) => {
+  const streams = Array.from({ length: 200 }, (_, index) => ({
+    stream_id: index + 1, name: `Movie ${index}`, stream_icon: '', container_extension: 'mp4', category_id: '1',
+  }));
+  await neuterVideo(page);
+  await routeLiveManifest(page);
+  await routeVodCatalog(page, [{ category_id: '1', category_name: 'Cat A' }], () => streams);
+  await page.goto('/');
+  await createPinFromSettings(page);
+
+  const view = page.locator('#view-parental-controls');
+  await view.locator('#parental-kind [data-value="vod"]').click();
+  const category = view.locator('[data-parental-group]').filter({ hasText: 'Cat A' });
+  await category.click();
+  const items = view.locator('[data-parental-item]');
+  await expect(items.first()).toContainText('Movie 0');
+  await page.keyboard.press('ArrowRight');
+  await expect(view.locator('[data-parental-item].focused')).toContainText('Movie 0');
+
+  for (let step = 0; step < 40; step++) await page.keyboard.press('ArrowDown');
+  const focused = view.locator('[data-parental-item].focused');
+  await expect(focused).toHaveAttribute('data-parental-item', '40');
+  await expect(focused).toBeInViewport();
+  expect(await items.count()).toBeLessThan(60);
+  await expect(items.filter({ hasText: /^Movie 0\b/ })).toHaveCount(0);
+
+  await page.keyboard.press('Enter');
+  await expect(focused).toContainText('Not locked');
+  await expect(view.locator('.parental-column-item .parental-column-note'))
+    .toContainText(['Locked', '1 set separately']);
+
+  for (let step = 0; step < 40; step++) await page.keyboard.press('ArrowUp');
+  await expect(view.locator('[data-parental-item].focused')).toHaveAttribute('data-parental-item', '0');
+  await expect(items.first()).toContainText('Movie 0');
+});
+
+for (const key of ['ArrowLeft', 'Enter'] as const) {
+  test(`${key} acts from a focused row that a wheel scroll unmounted`, async ({ page }) => {
+    const streams = Array.from({ length: 200 }, (_, index) => ({
+      stream_id: index + 1, name: `Movie ${index}`, stream_icon: '', container_extension: 'mp4', category_id: '1',
+    }));
+    await neuterVideo(page);
+    await routeLiveManifest(page);
+    await routeVodCatalog(page, [{ category_id: '1', category_name: 'Cat A' }], () => streams);
+    await page.goto('/');
+    await createPinFromSettings(page);
+
+    const view = page.locator('#view-parental-controls');
+    await view.locator('#parental-kind [data-value="vod"]').click();
+    await view.locator('[data-parental-group]').filter({ hasText: 'Cat A' }).click();
+    await expect(view.locator('[data-parental-item]').first()).toContainText('Movie 0');
+    await page.mouse.move(0, 0);
+    await page.keyboard.press('ArrowRight');
+    for (let step = 0; step < 5; step++) await page.keyboard.press('ArrowDown');
+    await expect(view.locator('[data-parental-item].focused')).toHaveAttribute('data-parental-item', '5');
+
+    await expect(async () => {
+      await view.locator('[data-parental-list="item"]').evaluate(list => { list.scrollTop = 8000; });
+      await expect(view.locator('[data-parental-item="5"]')).toHaveCount(0, { timeout: 200 });
+    }).toPass();
+    await page.keyboard.press(key);
+    if (key === 'ArrowLeft') {
+      await expect(view.locator('[data-parental-group].focused')).toContainText('Cat A');
+    } else {
+      await expect(view.locator('[data-parental-item="5"] .parental-exception')).toHaveText('Set separately');
+    }
+  });
+}
+
+test('the D-pad resumes from a row that a wheel scroll unmounted', async ({ page }) => {
+  const streams = Array.from({ length: 200 }, (_, index) => ({
+    stream_id: index + 1, name: `Movie ${index}`, stream_icon: '', container_extension: 'mp4', category_id: '1',
+  }));
+  await neuterVideo(page);
+  await routeLiveManifest(page);
+  await routeVodCatalog(page, [{ category_id: '1', category_name: 'Cat A' }], () => streams);
+  await page.goto('/');
+  await createPinFromSettings(page);
+
+  const view = page.locator('#view-parental-controls');
+  await view.locator('#parental-kind [data-value="vod"]').click();
+  await view.locator('[data-parental-group]').filter({ hasText: 'Cat A' }).click();
+  await expect(view.locator('[data-parental-item]').first()).toContainText('Movie 0');
+  await page.keyboard.press('ArrowRight');
+  for (let step = 0; step < 5; step++) await page.keyboard.press('ArrowDown');
+  await expect(view.locator('[data-parental-item].focused')).toHaveAttribute('data-parental-item', '5');
+
+  await expect(async () => {
+    await view.locator('[data-parental-list="item"]').evaluate(list => { list.scrollTop = 8000; });
+    await expect(view.locator('[data-parental-item="5"]')).toHaveCount(0, { timeout: 200 });
+  }).toPass();
+  await page.keyboard.press('ArrowDown');
+  const focused = view.locator('[data-parental-item].focused');
+  await expect(focused).toHaveAttribute('data-parental-item', '6');
+  await expect(focused).toBeInViewport();
+});
+
+test('a scrolled-away first group still leads Up to Lock suggested', async ({ page }) => {
+  const categories = [{ category_id: '1', category_name: 'Adult' }].concat(Array.from(
+    { length: 60 }, (_, index) => ({ category_id: String(index + 2), category_name: `Cat ${index + 1}` })));
+  await neuterVideo(page);
+  await routeLiveManifest(page);
+  await routeVodCatalog(page, categories, () => []);
+  await page.goto('/');
+  await createPinFromSettings(page);
+
+  const view = page.locator('#view-parental-controls');
+  await view.locator('#parental-kind [data-value="vod"]').click();
+  await view.locator('[data-parental-group="1"]').click();
+  // A resting cursor would hover-focus whatever row scrolls under it.
+  await page.mouse.move(0, 0);
+  await page.keyboard.press('ArrowUp');
+  await expect(view.locator('[data-parental-group].focused')).toHaveAttribute('data-parental-group', '0');
+
+  await expect(async () => {
+    await view.locator('[data-parental-list="group"]').evaluate(list => { list.scrollTop = 3000; });
+    await expect(view.locator('[data-parental-group="0"]')).toHaveCount(0, { timeout: 200 });
+  }).toPass();
+  await page.keyboard.press('ArrowUp');
+  await expect(view.locator('[data-parental-suggest]')).toHaveClass(/\bfocused\b/);
+});
+
+test('Down from a scrolled-away last item leaves the list as it would in view', async ({ page }) => {
+  const streams = Array.from({ length: 40 }, (_, index) => ({
+    stream_id: index + 1, name: `Movie ${index}`, stream_icon: '', container_extension: 'mp4', category_id: '1',
+  }));
+  await neuterVideo(page);
+  await routeLiveManifest(page);
+  await routeVodCatalog(page, [{ category_id: '1', category_name: 'Cat A' }], () => streams);
+  await page.goto('/');
+  await createPinFromSettings(page);
+
+  const view = page.locator('#view-parental-controls');
+  const list = view.locator('[data-parental-list="item"]');
+  const last = view.locator('[data-parental-item="39"]');
+  await view.locator('#parental-kind [data-value="vod"]').click();
+  await view.locator('[data-parental-group]').filter({ hasText: 'Cat A' }).click();
+  await page.mouse.move(0, 0);
+  await expect(view.locator('[data-parental-item]').first()).toContainText('Movie 0');
+  await page.keyboard.press('ArrowRight');
+  for (let step = 0; step < 39; step++) await page.keyboard.press('ArrowDown');
+  await expect(last).toHaveClass(/\bfocused\b/);
+  const focusedKey = () => page.evaluate(() =>
+    document.querySelector('#view-parental-controls .focused')?.getAttribute('data-key') ?? null);
+
+  await page.keyboard.press('ArrowDown');
+  const inView = await focusedKey();
+  expect(inView).not.toBe('vod:x1:40');
+  await page.keyboard.press('ArrowUp');
+  await expect(last).toHaveClass(/\bfocused\b/);
+
+  // The scroll guard reverts a scroll that lands while it holds the D-pad's offset.
+  await expect(async () => {
+    await list.evaluate(element => { element.scrollTop = 0; });
+    await expect(last).toHaveCount(0, { timeout: 200 });
+  }).toPass();
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(focusedKey).toBe(inView);
+});
+
+test('an item listed in two categories marks the one it was last loaded in Partly locked', async ({ page }) => {
+  const shared = { stream_id: 10, name: 'Movie Shared', stream_icon: '', container_extension: 'mp4', category_id: '1' };
+  const byCategory: Record<string, unknown[]> = {
+    1: [shared, { ...shared, stream_id: 20, name: 'Movie One' }],
+    // Only the shared item, so reassigning it is the sole change to the item map.
+    2: [{ ...shared, category_id: '2' }],
+  };
+  await neuterVideo(page);
+  await routeLiveManifest(page);
+  await routeVodCatalog(page, [
+    { category_id: '1', category_name: 'Cat A' },
+    { category_id: '2', category_name: 'Cat B' },
+  ], category => (category ? byCategory[category] ?? [] : byCategory[1]));
+  await page.goto('/');
+  await createPinFromSettings(page);
+
+  const view = page.locator('#view-parental-controls');
+  const group = (name: string) => view.locator('[data-parental-group]').filter({ hasText: name });
+  await view.locator('#parental-kind [data-value="vod"]').click();
+  await expect(group('Cat A')).toHaveClass(/\bactive\b/);
+  const item = view.locator('[data-parental-item]').filter({ hasText: 'Movie Shared' });
+  await expect(item).toContainText('Not locked');
+  await item.click();
+  await expect(item).toContainText('Locked');
+  await expect(group('Cat A')).toContainText('Partly locked');
+
+  await group('Cat B').click();
+  await expect(view.locator('.parental-column-item h3')).toHaveText('Cat B');
+  await expect(view.locator('[data-parental-item]')).toHaveCount(1);
+  await expect(group('Cat B')).toContainText('Partly locked');
+  await expect(group('Cat A')).not.toContainText('Partly locked');
 });
 
 test('Reset App clears a forgotten PIN', async ({ page }) => {

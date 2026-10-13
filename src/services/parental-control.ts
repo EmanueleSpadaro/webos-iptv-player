@@ -229,6 +229,8 @@ class ParentalControlServiceImpl {
   private listeners = new Set<(concealmentChanged: boolean) => void>();
   private concealKey = '';
   private badgeKey = '';
+  private ruleTables: [object, object] | null = null;
+  private ruleRevision = 0;
 
   reload(): void {
     const stored = StorageService.getParentalControl();
@@ -490,26 +492,21 @@ class ParentalControlServiceImpl {
   ): ParentalAccessDecision {
     const itemRule = this.config.itemRules[parentalTargetKey(request.target)];
     if (itemRule === 'allow') return { allowed: true };
-    if (itemRule === 'protect') {
+    if (itemRule === 'protect' || this.parentsLocked(request.parents)) {
       return {
         allowed: false,
         concealed: this.config.concealMode === 'hide-locked',
-        reason: 'item',
+        reason: itemRule === 'protect' ? 'item' : 'parent',
       };
     }
-    for (const parent of request.parents) {
-      const locked = parent.kind !== 'live-group' && !parent.categoryId
-        ? this.protectsAnyCatalogItem(parent)
-        : this.groupLocked(parent);
-      if (locked) {
-        return {
-          allowed: false,
-          concealed: this.config.concealMode === 'hide-locked',
-          reason: 'parent',
-        };
-      }
-    }
     return { allowed: true };
+  }
+
+  // What an item without its own rule inherits from its groups.
+  parentsLocked(parents: Array<LiveGroupTarget | CatalogCategoryTarget>): boolean {
+    return parents.some(parent => (parent.kind !== 'live-group' && !parent.categoryId
+      ? this.protectsAnyCatalogItem(parent)
+      : this.groupLocked(parent)));
   }
 
   authorize(request: ParentalAccessRequest, action: DeferredAction): boolean {
@@ -710,7 +707,11 @@ class ParentalControlServiceImpl {
   }
 
   groupProtected(target: LiveGroupTarget | CatalogCategoryTarget): boolean {
-    return this.config.groupRules[parentalTargetKey(target)] === 'protect';
+    return this.groupProtectedByKey(parentalTargetKey(target));
+  }
+
+  groupProtectedByKey(key: string): boolean {
+    return this.config.groupRules[key] === 'protect';
   }
 
   setGroupProtected(
@@ -725,6 +726,16 @@ class ParentalControlServiceImpl {
     this.persist('group-rule', `target=${key}`, `locked=${String(protectedValue)}`);
   }
 
+  // Rule tables are replaced, never mutated, so identity marks a change.
+  get rulesRevision(): number {
+    const tables = this.ruleTables;
+    if (!tables || tables[0] !== this.config.groupRules || tables[1] !== this.config.itemRules) {
+      this.ruleTables = [this.config.groupRules, this.config.itemRules];
+      this.ruleRevision++;
+    }
+    return this.ruleRevision;
+  }
+
   groupRuleKeys(): string[] {
     return Object.keys(this.config.groupRules);
   }
@@ -735,7 +746,15 @@ class ParentalControlServiceImpl {
   }
 
   itemRule(target: LiveChannelTarget | CatalogItemTarget): ParentalRuleValue | null {
-    return this.config.itemRules[parentalTargetKey(target)] ?? null;
+    return this.itemRuleByKey(parentalTargetKey(target));
+  }
+
+  hasItemRules(): boolean {
+    return Object.keys(this.config.itemRules).length > 0;
+  }
+
+  itemRuleByKey(key: string): ParentalRuleValue | null {
+    return this.config.itemRules[key] ?? null;
   }
 
   setItemRule(
