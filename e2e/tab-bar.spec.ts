@@ -213,3 +213,127 @@ test('leaving Settings (Cancel) moves the active tab back to Live', async ({ pag
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator('.tab-bar-item.active')).toHaveText('Live');
 });
+
+// Resolve a theme token to its computed rgb() through a transition-free probe.
+function tokenColor(page: import('@playwright/test').Page, token: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement('div');
+    probe.style.color = `var(${name})`;
+    document.body.appendChild(probe);
+    const c = getComputedStyle(probe).color;
+    probe.remove();
+    return c;
+  }, token);
+}
+
+test('the Search magnifier rests bare and draws the focus circle on hover and D-pad focus', async ({ page }) => {
+  await seedXtream(page);
+  await routeLiveManifest(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+
+  const icon = page.locator('.tab-bar-search .search-icon');
+  const look = () => icon.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { border: s.borderTopColor, shadow: s.boxShadow, transform: s.transform };
+  });
+  const rest = await look();
+  expect(rest.border).toBe('rgba(0, 0, 0, 0)');
+  expect(rest.shadow).toBe('none');
+  // Its parent must not clip the glow.
+  expect(await page.locator('.tab-bar-search').evaluate((el) => getComputedStyle(el).overflow)).toBe('visible');
+
+  const box = (await icon.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const ring = await tokenColor(page, '--focus-ring');
+  await expect.poll(async () => (await look()).border).toBe(ring);
+  const hover = await look();
+  expect(hover.shadow).not.toBe('none');
+  expect(hover.transform).toBe('none');
+  await page.mouse.move(960, 1070);
+  await expect.poll(async () => (await look()).shadow).toBe('none');
+
+  // D-pad: Up onto the bar, then Right along the ring to the magnifier.
+  for (let i = 0; i < 4 && !(await page.locator('.tab-bar-item.focused').count()); i++) {
+    await page.keyboard.press('ArrowUp');
+  }
+  for (let i = 0; i < 8 && !(await icon.evaluate((el) => el.classList.contains('focused'))); i++) {
+    await page.keyboard.press('ArrowRight');
+  }
+  await expect(icon).toHaveClass(/focused/);
+  await expect.poll(async () => (await look()).border).toBe(ring);
+  expect((await look()).transform).toBe('none');
+});
+
+test('a hovered text tab brightens to the active tab color', async ({ page }) => {
+  await seedXtream(page);
+  await routeLiveManifest(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+
+  const color = (section: string) => page.locator(`.tab-bar-item[data-section="${section}"]`)
+    .evaluate((el) => getComputedStyle(el).color);
+  const active = await color('live');
+  expect(await color('movies')).not.toBe(active);
+  const box = (await page.locator('.tab-bar-item[data-section="movies"]').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect.poll(() => color('movies')).toBe(active);
+});
+
+test('the open Search shows the text tabs\' accent underline under the magnifier', async ({ page }) => {
+  await seedXtream(page);
+  await routeLiveManifest(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+
+  const icon = page.locator('.tab-bar-search .search-icon');
+  const underline = () => icon.evaluate((el) => getComputedStyle(el, '::after').content);
+  expect(await underline()).toBe('none');
+
+  await enterTab(page, 'search');
+  await expect(page.locator('.tab-bar-search.expanded')).toBeVisible();
+  await page.mouse.move(960, 1070); // off the icon, so hover doesn't hide the underline
+  await expect.poll(underline).not.toBe('none');
+  expect(await icon.evaluate((el) => getComputedStyle(el, '::after').backgroundColor))
+    .toBe(await tokenColor(page, '--accent'));
+  // Only the straight bar: the circle's own border stays clear.
+  await expect.poll(() => icon.evaluate((el) => getComputedStyle(el).borderBottomColor)).toBe('rgba(0, 0, 0, 0)');
+  // The underline sits on the same baseline as the text tabs' underline.
+  const iconBottom = (await icon.boundingBox())!;
+  const tab = (await page.locator('.tab-bar-item[data-section="live"]').boundingBox())!;
+  expect(Math.abs((iconBottom.y + iconBottom.height) - (tab.y + tab.height))).toBeLessThanOrEqual(1.5);
+});
+
+test('switching to the D-pad drops a resting pointer\'s hover circle on the magnifier', async ({ page }) => {
+  await seedXtream(page);
+  await routeLiveManifest(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+
+  const icon = page.locator('.tab-bar-search .search-icon');
+  const look = () => icon.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { border: s.borderTopColor, shadow: s.boxShadow };
+  });
+  const box = (await icon.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect.poll(async () => (await look()).border).toBe(await tokenColor(page, '--focus-ring'));
+
+  // The pointer stays put while the D-pad moves focus into the list.
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(async () => (await look()).shadow).toBe('none');
+  expect((await look()).border).toBe('rgba(0, 0, 0, 0)');
+
+  // Moving the pointer brings the hover look back.
+  await page.mouse.move(box.x + box.width / 2 + 2, box.y + box.height / 2);
+  await expect.poll(async () => (await look()).shadow).not.toBe('none');
+
+  // The avatar's hover lift drops the same way.
+  const avatar = page.locator('.account-avatar');
+  const filter = () => avatar.evaluate((el) => getComputedStyle(el).filter);
+  const a = (await avatar.boundingBox())!;
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await expect.poll(filter).not.toBe('none');
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(filter).toBe('none');
+});

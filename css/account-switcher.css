@@ -28,7 +28,7 @@
 
 /* Pointer feedback (desktop mouse + Magic Remote pointer): a subtle lift that
    stacks with the D-pad focus ring. */
-.account-avatar:hover {
+html:not(.keyboard-nav) .account-avatar:hover {
   transform: scale(1.06);
   filter: brightness(1.12);
 }

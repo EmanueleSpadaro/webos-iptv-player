@@ -75,16 +75,17 @@ body.tabbar-docked #view-epg .epg-view {
   border-bottom-color: var(--accent);
 }
 
-.tab-bar-item.focused {
+.tab-bar-item.focused,
+html:not(.keyboard-nav) .tab-bar-item:hover {
   color: var(--text-primary);
 }
 
+/* No overflow clip: it would cut the magnifier's focus glow. */
 .tab-bar-search {
   flex-shrink: 0;
   margin-left: auto;
   display: flex;
   align-items: center;
-  overflow: hidden;
 }
 
 .tab-bar-search-input {
@@ -113,26 +114,53 @@ body.tabbar-docked #view-epg .epg-view {
   outline: none;
 }
 
+/* A bare magnifier at rest; pointer hover and D-pad focus draw a circle
+   matching the account avatar beside it. */
 .search-icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  box-sizing: border-box;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
   background: transparent;
-  border: none;
-  color: var(--text-secondary);
+  border: 2px solid transparent;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .search-icon svg {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: block;
 }
 
-.search-icon.focused,
-.search-icon.active {
-  color: var(--text-primary);
-  border: none;
-  box-shadow: none;
+html:not(.keyboard-nav) .search-icon:hover,
+.search-icon.focused {
+  background: var(--bg-tertiary);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 20px var(--accent-glow);
+}
+
+/* The text tabs' active underline, shown while the circle is not; a straight
+   bar, since `.tab-bar-item.active`'s bottom border would curve round it. */
+.search-icon.active:not(.focused) {
+  border-color: transparent;
+}
+
+.search-icon.active:not(.focused)::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -2px;
+  height: 3px;
+  background: var(--accent);
+}
+
+html:not(.keyboard-nav) .search-icon:hover::after {
+  content: none;
 }

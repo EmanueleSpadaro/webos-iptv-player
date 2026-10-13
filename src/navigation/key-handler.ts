@@ -153,6 +153,21 @@ export const KeyHandler = {
       }
     });
 
+    // `:hover` outlives a switch to the D-pad while the pointer sits still, so
+    // CSS scopes pointer-hover looks to `html:not(.keyboard-nav)`. Compare
+    // coordinates: Chromium fires a synthetic mousemove when content moves
+    // under a resting cursor, and the first one only seeds the position.
+    const root = document.documentElement;
+    let pointerX: number | null = null;
+    let pointerY: number | null = null;
+    document.addEventListener('keydown', () => root.classList.add('keyboard-nav'), true);
+    document.addEventListener('mousemove', (e: MouseEvent) => {
+      const moved = pointerX !== null && (e.screenX !== pointerX || e.screenY !== pointerY);
+      pointerX = e.screenX;
+      pointerY = e.screenY;
+      if (moved) root.classList.remove('keyboard-nav');
+    }, true);
+
     // Mouse support for desktop preview. Skip re-dispatching when the focusable hasn't changed.
     let lastHover: HTMLElement | null = null;
     const setHoverTarget = (target: HTMLElement | null): void => {

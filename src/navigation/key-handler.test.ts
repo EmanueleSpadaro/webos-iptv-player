@@ -45,6 +45,33 @@ describe('KeyHandler', () => {
     vi.useRealTimers();
   });
 
+  // Must run before any other test moves the pointer: module state persists.
+  describe('keyboard-nav root class', () => {
+    const root = document.documentElement;
+    const move = (screenX: number, screenY: number): void => {
+      document.dispatchEvent(new MouseEvent('mousemove', { screenX, screenY, bubbles: true }));
+    };
+
+    it('keeps keyboard-nav through the first synthetic mousemove after startup', () => {
+      press(K.DOWN);
+      expect(root.classList.contains('keyboard-nav')).toBe(true);
+      move(100, 100);
+      expect(root.classList.contains('keyboard-nav')).toBe(true);
+    });
+
+    it('keeps keyboard-nav when a mousemove repeats the resting position', () => {
+      press(K.DOWN);
+      move(100, 100);
+      expect(root.classList.contains('keyboard-nav')).toBe(true);
+    });
+
+    it('drops keyboard-nav once the pointer actually moves', () => {
+      press(K.DOWN);
+      move(104, 100);
+      expect(root.classList.contains('keyboard-nav')).toBe(false);
+    });
+  });
+
   describe('remote key mapping', () => {
     it.each([
       [K.UP, 'up'],
