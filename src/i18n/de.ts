@@ -193,6 +193,7 @@ export const DE_MESSAGES = {
   'reminderManager.title': 'Programmerinnerungen',
   'reminderManager.summary': 'Bevorstehende Erinnerungen: {count}',
   'reminderManager.empty': 'Keine bevorstehenden Erinnerungen.',
+  'reminderManager.emptyHint': 'Wählen Sie unter „Programm“ eine bevorstehende Sendung aus, um eine Erinnerung einzustellen.',
   'reminderManager.clearAll': 'Alle Erinnerungen löschen',
   'reminderManager.clearTitle': 'Alle Erinnerungen löschen?',
   'reminderManager.clearMessage': 'Alle Programmerinnerungen werden entfernt.',

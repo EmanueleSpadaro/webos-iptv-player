@@ -193,6 +193,7 @@ export const PT_BR_MESSAGES = {
   'reminderManager.title': 'Lembretes de programas',
   'reminderManager.summary': 'Lembretes futuros: {count}',
   'reminderManager.empty': 'Nenhum lembrete futuro.',
+  'reminderManager.emptyHint': 'Para definir um lembrete, selecione um programa futuro no Guia.',
   'reminderManager.clearAll': 'Limpar todos os lembretes',
   'reminderManager.clearTitle': 'Limpar todos os lembretes?',
   'reminderManager.clearMessage': 'Todos os lembretes de programas serão removidos.',

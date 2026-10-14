@@ -196,6 +196,7 @@ export const EN_MESSAGES = {
   'reminderManager.title': 'Program Reminders',
   'reminderManager.summary': 'Upcoming reminders: {count}',
   'reminderManager.empty': 'No upcoming reminders.',
+  'reminderManager.emptyHint': 'To set a reminder, select an upcoming program in the Guide.',
   'reminderManager.clearAll': 'Clear All Reminders',
   'reminderManager.clearTitle': 'Clear all reminders?',
   'reminderManager.clearMessage': 'Every program reminder will be removed.',

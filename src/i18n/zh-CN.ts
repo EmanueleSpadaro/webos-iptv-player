@@ -190,6 +190,7 @@ export const ZH_CN_MESSAGES = {
   'reminderManager.title': '节目提醒',
   'reminderManager.summary': '即将播出的节目提醒：{count} 个',
   'reminderManager.empty': '暂无即将播出的节目提醒。',
+  'reminderManager.emptyHint': '在节目指南中选择即将播出的节目，即可设置提醒。',
   'reminderManager.clearAll': '清除所有提醒',
   'reminderManager.clearTitle': '清除所有提醒？',
   'reminderManager.clearMessage': '所有节目提醒都将被移除。',

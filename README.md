@@ -43,7 +43,7 @@
 
 | Theme picker | Reminder manager |
 | --- | --- |
-| ![Theme picker](https://github.com/user-attachments/assets/2e5ed981-c01b-48ab-a681-9a0ecd6431b8) | ![Reminder manager](https://github.com/user-attachments/assets/1d9bd762-def1-4e57-82cd-52eb70834b1a) |
+| ![Theme picker](https://github.com/user-attachments/assets/2e5ed981-c01b-48ab-a681-9a0ecd6431b8) | ![Reminder manager](https://github.com/user-attachments/assets/76ed121f-61eb-4c36-93a9-9aa6abdb0132) |
 
 | Parental controls | LAN setup |
 | --- | --- |

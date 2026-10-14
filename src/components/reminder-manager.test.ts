@@ -82,6 +82,8 @@ describe('ReminderManager', () => {
 
     expect(container.querySelector('.reminder-manager-empty p')?.textContent)
       .toBe('No upcoming reminders.');
+    expect(container.querySelector('.reminder-manager-empty-hint')?.textContent)
+      .toBe('To set a reminder, select an upcoming program in the Guide.');
     expect(container.querySelector('.reminder-manager-back')?.classList.contains('focused'))
       .toBe(true);
   });

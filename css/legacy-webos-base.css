@@ -99,7 +99,7 @@
   .reminder-day-cards > * + * { margin-top: 12px; }
   .reminder-manager-row > * + * { margin-left: 24px; }
   .reminder-manager-time > * + * { margin-left: 10px; }
-  .reminder-manager-empty > * + * { margin-top: 22px; }
+  .reminder-manager-empty > * + * { margin-top: 12px; }
   .tab-bar-inner > * + * { margin-left: 32px; }
   .search-list > * + * { margin-top: 8px; }
   .search-channel-row > * + * { margin-left: 24px; }

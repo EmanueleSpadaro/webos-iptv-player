@@ -43,7 +43,7 @@
 
 | 主题选择器 | 节目提醒 |
 | --- | --- |
-| ![主题选择器](https://github.com/user-attachments/assets/2e5ed981-c01b-48ab-a681-9a0ecd6431b8) | ![节目提醒](https://github.com/user-attachments/assets/1d9bd762-def1-4e57-82cd-52eb70834b1a) |
+| ![主题选择器](https://github.com/user-attachments/assets/2e5ed981-c01b-48ab-a681-9a0ecd6431b8) | ![节目提醒](https://github.com/user-attachments/assets/76ed121f-61eb-4c36-93a9-9aa6abdb0132) |
 
 | 家长控制 | 局域网设置 |
 | --- | --- |

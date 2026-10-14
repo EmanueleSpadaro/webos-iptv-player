@@ -190,6 +190,7 @@ export const TR_MESSAGES = {
   'reminderManager.title': 'Program Hatırlatıcıları',
   'reminderManager.summary': 'Yaklaşan hatırlatıcı: {count}',
   'reminderManager.empty': 'Yaklaşan hatırlatıcı yok.',
+  'reminderManager.emptyHint': 'Hatırlatıcı ayarlamak için TV Rehberi’nde yaklaşan bir program seçin.',
   'reminderManager.clearAll': 'Tüm Hatırlatıcıları Temizle',
   'reminderManager.clearTitle': 'Tüm hatırlatıcılar temizlensin mi?',
   'reminderManager.clearMessage': 'Tüm program hatırlatıcıları kaldırılacak.',

@@ -118,15 +118,15 @@
   }
 
   .reminder-day-label {
-    flex: 0 0 112px;
+    flex: 0 0 calc(112px * var(--font-scale));
   }
 
   .reminder-manager-time {
-    flex: 0 0 150px;
+    flex: 0 0 calc(150px * var(--font-scale));
   }
 
   .reminder-manager-remove {
-    flex: 0 0 164px;
+    flex: 0 0 auto;
   }
 
   .channel-epg-offset-controls {

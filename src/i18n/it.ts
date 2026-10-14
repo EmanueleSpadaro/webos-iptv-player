@@ -193,6 +193,7 @@ export const IT_MESSAGES = {
   'reminderManager.title': 'Promemoria programmi',
   'reminderManager.summary': 'Promemoria imminenti: {count}',
   'reminderManager.empty': 'Nessun promemoria imminente.',
+  'reminderManager.emptyHint': 'Per impostare un promemoria, seleziona un programma in arrivo nella Guida.',
   'reminderManager.clearAll': 'Cancella tutti i promemoria',
   'reminderManager.clearTitle': 'Cancellare tutti i promemoria?',
   'reminderManager.clearMessage': 'Tutti i promemoria verranno rimossi.',

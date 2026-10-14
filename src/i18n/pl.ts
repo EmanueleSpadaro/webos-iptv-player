@@ -199,6 +199,7 @@ export const PL_MESSAGES = {
   'reminderManager.title': 'Przypomnienia o programach',
   'reminderManager.summary': 'Nadchodzące przypomnienia: {count}',
   'reminderManager.empty': 'Brak nadchodzących przypomnień.',
+  'reminderManager.emptyHint': 'Aby ustawić przypomnienie, wybierz nadchodzący program w Programie TV.',
   'reminderManager.clearAll': 'Usuń wszystkie przypomnienia',
   'reminderManager.clearTitle': 'Usunąć wszystkie przypomnienia?',
   'reminderManager.clearMessage': 'Wszystkie przypomnienia zostaną usunięte.',

@@ -103,6 +103,7 @@ export class ReminderManager {
           : html`
             <div class="reminder-manager-empty">
               <p>${t('reminderManager.empty')}</p>
+              <p class="reminder-manager-empty-hint">${t('reminderManager.emptyHint')}</p>
             </div>`}
       </div>
     `);

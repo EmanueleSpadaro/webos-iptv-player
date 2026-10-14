@@ -193,6 +193,7 @@ export const FR_MESSAGES = {
   'reminderManager.title': 'Rappels de programmes',
   'reminderManager.summary': 'Rappels à venir : {count}',
   'reminderManager.empty': 'Aucun rappel à venir.',
+  'reminderManager.emptyHint': 'Pour définir un rappel, sélectionnez un programme à venir dans le Guide.',
   'reminderManager.clearAll': 'Effacer tous les rappels',
   'reminderManager.clearTitle': 'Effacer tous les rappels ?',
   'reminderManager.clearMessage': 'Tous les rappels de programmes seront supprimés.',

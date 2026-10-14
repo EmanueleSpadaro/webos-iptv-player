@@ -199,6 +199,7 @@ export const RU_MESSAGES = {
   'reminderManager.title': 'Напоминания о передачах',
   'reminderManager.summary': 'Предстоящих напоминаний: {count}',
   'reminderManager.empty': 'Нет предстоящих напоминаний.',
+  'reminderManager.emptyHint': 'Чтобы установить напоминание, выберите предстоящую передачу в Телегиде.',
   'reminderManager.clearAll': 'Удалить все напоминания',
   'reminderManager.clearTitle': 'Удалить все напоминания?',
   'reminderManager.clearMessage': 'Все напоминания о передачах будут удалены.',

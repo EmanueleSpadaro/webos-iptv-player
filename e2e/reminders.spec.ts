@@ -130,3 +130,92 @@ test('long reminder text stays on one line inside the card', async ({ page }) =>
   expect(timeFits.text).toMatch(/^\d{2}:\d{2}$/);
   expect(timeFits.scrollWidth).toBeLessThanOrEqual(timeFits.clientWidth);
 });
+
+test('reminder manager icons scale with the text size', async ({ page }) => {
+  await routePlaylist(page);
+  await seedPlaylist(page);
+  await page.addInitScript((k) => {
+    const now = Date.now();
+    localStorage.setItem('iptv_reminders', JSON.stringify([
+      { channelKey: k, channelName: 'Channel One', title: 'Alpha', startMs: now + 3600000, stopMs: now + 7200000 },
+    ]));
+  }, channelKey(CHAN_ONE));
+
+  await page.goto('/');
+  await page.locator('.tab-bar-item[data-section="settings"]').click();
+  await page.locator('#manage-reminders').click();
+  await expect(page.locator('.reminder-manager-row')).toBeVisible();
+
+  const icons = [
+    '.reminder-manager-back .reminder-manager-button-icon',
+    '.reminder-manager-clear .reminder-manager-button-icon',
+    '.reminder-manager-time-icon',
+    '.reminder-manager-remove .reminder-manager-button-icon',
+  ];
+  const measure = () => page.evaluate((selectors) => selectors.map((selector) => {
+    const rect = document.querySelector(selector)!.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }), icons);
+
+  await page.evaluate(() => { document.documentElement.dataset.textSize = '100'; });
+  const base = await measure();
+  await page.evaluate(() => { document.documentElement.dataset.textSize = '150'; });
+  const large = await measure();
+
+  base.forEach((size, i) => {
+    expect(size.width, icons[i]).toBeGreaterThan(0);
+    expect(large[i].width / size.width, icons[i]).toBeCloseTo(1.5, 1);
+    expect(large[i].height / size.height, icons[i]).toBeCloseTo(1.5, 1);
+  });
+});
+
+test('reminder card columns fit their text at text size 150', async ({ page }) => {
+  await routePlaylist(page);
+  await seedPlaylist(page);
+  await page.addInitScript((k) => {
+    localStorage.setItem('iptv_locale', JSON.stringify('de'));
+    localStorage.setItem('iptv_text_size', JSON.stringify('150'));
+    const now = Date.now();
+    localStorage.setItem('iptv_reminders', JSON.stringify([
+      { channelKey: k, channelName: 'Channel One', title: 'Alpha', startMs: now + 3 * 86400000, stopMs: now + 3 * 86400000 + 3600000 },
+    ]));
+  }, channelKey(CHAN_ONE));
+
+  await page.goto('/');
+  await page.locator('.tab-bar-item[data-section="settings"]').click();
+  await page.locator('#manage-reminders').click();
+  await expect(page.locator('.reminder-manager-row')).toBeVisible();
+
+  for (const selector of ['.reminder-day-label', '.reminder-manager-time', '.reminder-manager-remove']) {
+    const fit = await page.locator(selector).evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(fit.scrollWidth, selector).toBeLessThanOrEqual(fit.clientWidth);
+  }
+  const row = await page.locator('.reminder-manager-row').boundingBox();
+  const remove = await page.locator('.reminder-manager-remove').boundingBox();
+  expect(remove!.x + remove!.width).toBeLessThanOrEqual(row!.x + row!.width);
+});
+
+test('the empty-state hint wraps to a readable width at text size 150', async ({ page }) => {
+  await routePlaylist(page);
+  await seedPlaylist(page);
+  await page.addInitScript(() => { localStorage.setItem('iptv_locale', JSON.stringify('de')); });
+
+  await page.goto('/');
+  await page.locator('.tab-bar-item[data-section="settings"]').click();
+  await page.locator('#manage-reminders').click();
+  await page.evaluate(() => { document.documentElement.dataset.textSize = '150'; });
+
+  const hint = page.locator('.reminder-manager-empty-hint');
+  await expect(hint).toBeVisible();
+  const box = await hint.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+    return { width: rect.width, left: rect.left, right: rect.right, lines: Math.round(rect.height / lineHeight) };
+  });
+  expect(box.width).toBeLessThanOrEqual(1100);
+  expect(box.lines).toBe(2);
+  expect(Math.abs((box.left + box.right) / 2 - 960)).toBeLessThan(2);
+});

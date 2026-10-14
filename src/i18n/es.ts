@@ -193,6 +193,7 @@ export const ES_MESSAGES = {
   'reminderManager.title': 'Recordatorios de programas',
   'reminderManager.summary': 'Recordatorios próximos: {count}',
   'reminderManager.empty': 'No hay recordatorios próximos.',
+  'reminderManager.emptyHint': 'Para configurar un recordatorio, selecciona un programa próximo en la Guía.',
   'reminderManager.clearAll': 'Borrar todos los recordatorios',
   'reminderManager.clearTitle': '¿Borrar todos los recordatorios?',
   'reminderManager.clearMessage': 'Se eliminarán todos los recordatorios.',

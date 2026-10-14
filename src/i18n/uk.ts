@@ -199,6 +199,7 @@ export const UK_MESSAGES = {
   'reminderManager.title': 'Нагадування про програми',
   'reminderManager.summary': 'Майбутніх нагадувань: {count}',
   'reminderManager.empty': 'Немає майбутніх нагадувань.',
+  'reminderManager.emptyHint': 'Щоб установити нагадування, виберіть майбутню передачу в Телегіді.',
   'reminderManager.clearAll': 'Видалити всі нагадування',
   'reminderManager.clearTitle': 'Видалити всі нагадування?',
   'reminderManager.clearMessage': 'Усі нагадування про програми буде видалено.',
