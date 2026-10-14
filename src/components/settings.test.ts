@@ -459,6 +459,22 @@ describe('Settings.render', () => {
       .toBe('http://epg');
   });
 
+  it('uses type="url" on URL inputs so the webOS keyboard shows URL keys', () => {
+    state.playlists = [
+      { id: 'p1', name: 'P1', url: 'http://a', source: 'url' },
+      { id: 'x1', name: 'X1', url: 'http://host:8080', source: 'xtream', xtream: { username: 'u', password: 'p' } },
+    ];
+    state.manualEpgSources = [{ url: 'http://epg', playlistIds: [] }];
+    settings.render();
+    click('#add-playlist');
+
+    const urlInputs = Array.from(container.querySelectorAll<HTMLInputElement>(
+      '.playlist-url, .xtream-url, .manual-epg-url'));
+    expect(urlInputs).toHaveLength(4);
+    expect(urlInputs.map(input => input.type)).toEqual(['url', 'url', 'url', 'url']);
+    expect(container.querySelector<HTMLInputElement>('.playlist-name')!.type).toBe('text');
+  });
+
   it('persists a disabled M3U source without deleting it', () => {
     state.playlists = [{ id: 'p1', name: 'P1', url: 'http://a', source: 'url' }];
     settings.render();

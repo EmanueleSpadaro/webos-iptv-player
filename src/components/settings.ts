@@ -368,7 +368,7 @@ function xtreamCard(pl: Partial<PlaylistEntry>) {
         </div>
         <div class="settings-field wide">
           <label>${t('settings.serverUrl')}</label>
-          <input type="text" class="settings-input xtream-url" data-focusable
+          <input type="url" class="settings-input xtream-url" data-focusable
                  aria-label="${t('settings.serverUrl')}" placeholder="http://host:port" value="${pl.url || ''}">
         </div>
         <div class="settings-field">
@@ -415,7 +415,7 @@ function manualEpgSourceRow(
     <div class="manual-epg-source" data-manual-epg-source data-key="manual-epg-${index}">
       <div class="manual-epg-source-head">
         <span class="manual-epg-priority">${index + 1}</span>
-        <input type="text" class="settings-input manual-epg-url" data-focusable
+        <input type="url" class="settings-input manual-epg-url" data-focusable
                aria-label="${t('settings.xmltvUrl')}" value="${source.url}"
                placeholder="http://host/guide.xml">
         <button class="btn btn-secondary move-epg-earlier"
@@ -727,7 +727,7 @@ export class Settings {
                                  data-focusable value="${pl.name || ''}">
                         </div>
                         <div class="settings-field">
-                          <input type="text" class="settings-input playlist-url"
+                          <input type="url" class="settings-input playlist-url"
                                  aria-label="${t('settings.playlistUrl')}" placeholder="https://...m3u"
                                  data-focusable value="${pl.url || ''}">
                         </div>
@@ -1910,7 +1910,7 @@ export class Settings {
                data-focusable value="${t('settings.playlistDefault', { number: nextNum })}">
       </div>
       <div class="settings-field">
-        <input type="text" class="settings-input playlist-url"
+        <input type="url" class="settings-input playlist-url"
                aria-label="${t('settings.playlistUrl')}" placeholder="https://...m3u"
                data-focusable value="">
       </div>
