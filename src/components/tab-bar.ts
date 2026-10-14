@@ -190,10 +190,12 @@ export class TabBar {
     if (!this.searchExpanded || !input || !icon) return null;
     const iconRect = icon.getBoundingClientRect();
     const inputWidth = parseFloat(input.style.width) || input.getBoundingClientRect().width;
+    // The input may still be sliding open, so derive its settled edges from
+    // the icon it ends beside and its target width.
     return {
-      right: iconRect.right,
+      right: iconRect.left - SEARCH_INPUT_GAP,
       bottom: input.getBoundingClientRect().bottom,
-      width: inputWidth + SEARCH_INPUT_GAP + iconRect.width,
+      width: inputWidth,
     };
   }
 

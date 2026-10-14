@@ -1038,7 +1038,7 @@ test('relocking while recent searches are open keeps movies in the next search',
   await expect(panel).toBeVisible();
   await expect.poll(async () => {
     const [box, hung] = await Promise.all([
-      page.locator('.tab-bar-search').boundingBox(), panel.boundingBox(),
+      page.locator('.tab-bar-search-input').boundingBox(), panel.boundingBox(),
     ]);
     return Math.abs(box!.x + box!.width - (hung!.x + hung!.width));
   }).toBeLessThanOrEqual(1);

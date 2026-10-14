@@ -39,7 +39,7 @@
 
 | Search | Settings |
 | --- | --- |
-| ![Search](https://github.com/user-attachments/assets/8677ff38-b32d-44af-991b-ce40a7157e61) | ![Settings](https://github.com/user-attachments/assets/59b155ed-40b6-4ebd-b063-a1e8cbd4de33) |
+| ![Search](https://github.com/user-attachments/assets/94bd8f82-1774-4a46-a607-206cf8321c4d) | ![Settings](https://github.com/user-attachments/assets/59b155ed-40b6-4ebd-b063-a1e8cbd4de33) |
 
 | Theme picker | Reminder manager |
 | --- | --- |
@@ -83,7 +83,7 @@
 
 **Navigation**
 
-- **Search** — across channels, EPG programs, movies, and series, with direct live, catch-up, and reminder actions
+- **Search** — across channels, EPG programs, movies, and series, with direct live, catch-up, and reminder actions; recent searches drop down under the search box for one-press repeat searches
 - **Channel sidebar** — switch channels over the video with current-program info, organized by group
 - **Channel customization** — reorder, hide, rename, regroup, manage favorites, and correct per-channel EPG matching or timing
 - **Auto-play and genre group icons** for faster browsing
@@ -248,11 +248,12 @@ Open with the **Blue** key or the **Settings** tab in the top bar. Sections:
 
 - **Language** — follow the TV's system language when supported, or choose a language explicitly.
 - **Device Setup** — scan the QR code to configure the app from a phone, or open the shown URL on a computer and enter the pairing code.
-- **Xtream Accounts** — add, edit, remove, or temporarily disable accounts; check credentials, connection usage, and expiry; and choose TS, HLS, or Auto for live streams. The playlist and EPG are derived from the account credentials on Save.
+- **Parental controls** — set a PIN; lock Live TV groups, movie and series categories, or individual titles; show locked content with a lock or hide it; and choose when the PIN is asked again.
+- **Xtream Accounts** — add, edit, remove, or temporarily disable accounts; check credentials, connection usage, and expiry; choose TS, HLS, or Auto for live streams; and pick the **Live categories** to load, optionally showing new ones automatically. The playlist and EPG are derived from the account credentials on Save.
 - **Playlists** — add, edit, remove, or temporarily disable M3U URLs. Re-applied on Save.
 - **Upload Playlists** — lists playlists uploaded through Device Setup, with controls to temporarily disable or remove each upload. New uploads appear automatically through Luna push.
 - **Channels** — check live-stream health; reorder, hide, rename, regroup, manually map entries to XMLTV channels, or correct one channel's EPG time; show hidden channels or reset customizations.
-- **XMLTV URL** — set the program guide URL, also auto-detected from `url-tvg`, `x-tvg-url`, or `tvg-url` in M3U playlists.
+- **Manual XMLTV sources** — add several program guide URLs, prioritized from top to bottom, and apply each to all playlists or to specific ones. Guide URLs are also discovered automatically from `url-tvg`, `x-tvg-url`, or `tvg-url` in M3U playlists.
 - **EPG time zone** — show guide times in the TV's **Device** time zone or the guide **Feed** time zone.
 - **EPG time correction** — adjust each source independently in 15-minute steps.
 - **Program reminders** — open the date-grouped Reminder Manager to review or remove upcoming reminders.

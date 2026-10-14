@@ -383,6 +383,24 @@ test('a click on the dimmed view leaves search and restores the tab underneath',
   await expect(page.locator('.tab-bar .search-icon')).not.toHaveClass(/active/);
 });
 
+test('recent searches line up with the search input, not the icon', async ({ page }) => {
+  await seedSearch(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_search_history', JSON.stringify(['one']));
+  });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterSearch(page);
+  const panel = page.locator('.search-history-panel');
+  await expect(panel).toBeVisible();
+  await page.waitForTimeout(400);
+  const [panelBox, inputBox] = await Promise.all([
+    panel.boundingBox(), page.locator('.tab-bar-search-input').boundingBox(),
+  ]);
+  expect(Math.abs(panelBox!.x - inputBox!.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs((panelBox!.x + panelBox!.width) - (inputBox!.x + inputBox!.width))).toBeLessThanOrEqual(1);
+});
+
 // Regression: at 150% text the French "clear" label spilled past the panel.
 test('a long clear label at the largest text size widens recent searches to fit', async ({ page }) => {
   await seedSearch(page);
