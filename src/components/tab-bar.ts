@@ -5,9 +5,18 @@ import { CONFIG } from '../config';
 import { SEARCH_ICON, UNLOCK_ICON } from './icons';
 import { AccountSwitcher } from './account-switcher';
 import { t } from '../i18n';
+import { createLogger } from '../utils/logger';
 
 // Cap for the expanded inline search box.
 export const SEARCH_INPUT_MAX_WIDTH = 600;
+// `.tab-bar-search.expanded .tab-bar-search-input` margin-right in tab-bar.css.
+const SEARCH_INPUT_GAP = 14;
+// A little past the box's 260 ms width transition, in case transitionend never fires.
+const SEARCH_EXPAND_FALLBACK_MS = 320;
+
+const log = createLogger('TabBar');
+
+type SearchCollapseReason = 'toggle' | 'back' | 'escape' | 'dismiss' | 'hidden' | 'section-change';
 
 // The single source of truth for the sections: order, label, the view each maps
 // to, and whether it needs an Xtream account.
@@ -40,13 +49,18 @@ interface TabBarHandlers {
   // The search query changed (typed / cleared); the host shows the results view
   // over the current one only while the query is non-empty.
   onSearchQuery: (query: string) => void;
-  // Enter / Down in the search box: hand focus to the results below.
-  onSearchLeave: () => void;
+  // Enter / Down in the search box: hand focus to the results or recent
+  // searches below; false when there is nothing to take it.
+  onSearchLeave: () => boolean;
   // The search box was closed (Back / Escape / toggle): restore the view the
   // search was opened from.
   onSearchClose: () => void;
   // A different Xtream account was chosen in the avatar dropdown.
   onSelectAccount: (accountId: string) => void;
+  // The avatar dropdown opened; overlays above the tab bar must give way.
+  onAccountMenuOpen: () => void;
+  // The avatar dropdown closed (picked, dismissed, or toggled).
+  onAccountMenuClose: () => void;
   // End a parental unlock session before it times out.
   onLockNow: () => void;
 }
@@ -65,6 +79,8 @@ export class TabBar {
   private active: Section = 'live';
   private focusIndex = 0;
   private searchExpanded = false;
+  private expandGeneration = 0;
+  private expandStartedAt = 0;
   private searchBound = false;
   private switcher: AccountSwitcher | null = null;
   private accounts: PlaylistEntry[] = [];
@@ -80,6 +96,8 @@ export class TabBar {
   // True while the inline search box is expanded (it overlays other views but
   // keeps Search active, so the host shouldn't re-sync the active tab then).
   get searchOpen(): boolean { return this.searchExpanded; }
+  get accountMenuOpen(): boolean { return !!this.switcher?.menuOpen; }
+  get activeSection(): Section { return this.active; }
 
   refresh(): void { this.render(); }
 
@@ -127,8 +145,9 @@ export class TabBar {
     this._shown = v;
     if (!v) {
       this._focused = false;
+      // Search first: closing the menu must not reopen recent searches.
+      if (this.searchExpanded) this.dropSearch('hidden');
       this.switcher?.closeMenu();
-      if (this.searchExpanded) { this.searchExpanded = false; this.resetSearchInput(); }
     }
     document.body.classList.toggle('tabbar-docked', v);
     if (v) { this.ensureEl(); this.render(); }
@@ -136,7 +155,7 @@ export class TabBar {
   }
 
   setActive(section: Section): void {
-    if (section !== 'search' && this.searchExpanded) { this.searchExpanded = false; this.resetSearchInput(); }
+    if (section !== 'search' && this.searchExpanded) this.dropSearch('section-change');
     this.active = section;
     this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === section));
     if (this._shown) this.render();
@@ -145,9 +164,37 @@ export class TabBar {
   // Collapse the inline box's DOM back to width 0 when search is left via a route
   // other than collapseSearch() (switching section, hiding the bar), so the next
   // expand animates from 0 again instead of popping open.
+  private dropSearch(reason: SearchCollapseReason): void {
+    log.debug('Search box collapsed', 'event=search.box.collapsed', `reason=${reason}`);
+    this.searchExpanded = false;
+    this.resetSearchInput();
+  }
+
   private resetSearchInput(): void {
     const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
     if (input) { input.style.width = ''; input.value = ''; input.blur(); }
+  }
+
+  // Fill the expanded search box from outside (a recent search was picked).
+  setSearchQuery(query: string): void {
+    const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
+    if (input) input.value = query;
+  }
+
+  // Where a dropdown hangs from the expanded search box: under the input and
+  // magnifier together. Read from the target width, since the box may still
+  // be sliding open.
+  searchAnchor(): { right: number; bottom: number; width: number } | null {
+    const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
+    const icon = this.el?.querySelector<HTMLElement>('.tab-bar-search .search-icon');
+    if (!this.searchExpanded || !input || !icon) return null;
+    const iconRect = icon.getBoundingClientRect();
+    const inputWidth = parseFloat(input.style.width) || input.getBoundingClientRect().width;
+    return {
+      right: iconRect.right,
+      bottom: input.getBoundingClientRect().bottom,
+      width: inputWidth + SEARCH_INPUT_GAP + iconRect.width,
+    };
   }
 
   // Move input focus onto the bar (D-pad Up from a view's top row).
@@ -170,6 +217,7 @@ export class TabBar {
   // the pointer, which doesn't route through the bar). Without this, a stale
   // `_focused` makes handleKey route later input into the bar and swallow it.
   blur(): void {
+    this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.blur();
     if (this._focused) this.dropFocus();
   }
 
@@ -181,6 +229,8 @@ export class TabBar {
       if (hit?.closest('[data-lock-now]')) {
         this.dropFocus();
         this.handlers.onLockNow();
+        // The click took focus from the open box; give the remote back to it.
+        if (this.searchExpanded) this.focus();
         return;
       }
       const item = hit?.closest<HTMLElement>('.tab-bar-item');
@@ -188,8 +238,8 @@ export class TabBar {
       const section = item.dataset.section as Section;
       if (section === 'search') {
         // Toggle: a second click on the magnifier slides the box back in.
-        if (this.searchExpanded) this.collapseSearch();
-        else this.expandSearch();
+        if (this.searchExpanded) this.collapseSearch('toggle');
+        else this.expandSearch('pointer');
         return;
       }
       this.active = section;
@@ -206,7 +256,11 @@ export class TabBar {
       return;
     }
     if (this.searchExpanded) {
-      if (action === 'back') this.collapseSearch();
+      // Reached only when the input lost DOM focus (e.g. to a pointer click),
+      // since the global handler leaves keys typed into it alone.
+      if (action === 'back') this.collapseSearch('back');
+      else if (action === 'down' || action === 'select') this.leaveSearchInput();
+      else this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.focus();
       return;
     }
     switch (action) {
@@ -231,7 +285,7 @@ export class TabBar {
           this.switcher?.openMenu();
           this.render();
         } else if (this.sections[this.focusIndex].id === 'search') {
-          this.expandSearch();
+          this.expandSearch('key');
         } else {
           this.dropFocus();
           this.handlers.onEnter(this.active);
@@ -264,22 +318,64 @@ export class TabBar {
   // Expand the inline search box: slide it out from the magnifier toward
   // Settings and focus it. The host keeps the current view; results only appear
   // (over it) once a query is typed.
-  private expandSearch(): void {
+  private expandSearch(mode: 'key' | 'pointer'): void {
+    log.debug('Search box expanded', 'event=search.box.expanded', `mode=${mode}`);
     this.active = 'search';
     this.focusIndex = this.sections.findIndex((s) => s.id === 'search');
     this.searchExpanded = true;
     this._focused = true;
     this.render();
-    this.handlers.onEnter('search'); // host remembers the current view + preps results
     const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
     if (input) {
       input.value = '';
       this.setSearchWidth(input);
-      input.focus();
     }
+    this.expandStartedAt = Date.now();
+    // After sizing the box, so the host can hang recent searches from it.
+    this.handlers.onEnter('search'); // host remembers the current view + preps results
+    input?.focus();
   }
 
-  private collapseSearch(): void {
+  closeSearch(): void {
+    if (this.searchExpanded) this.collapseSearch('dismiss');
+  }
+
+  // Run once the box has finished sliding open, so nothing else competes with
+  // the slide for frames; skipped if the box closed meanwhile.
+  afterSearchExpanded(callback: () => void): void {
+    const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
+    const generation = ++this.expandGeneration;
+    // Timed from the width change, so synchronous prep before this call counts.
+    const startedAt = this.expandStartedAt || Date.now();
+    const delayMs = Date.now() - startedAt;
+    let done = false;
+    const finish = (source: 'transitionend' | 'timeout'): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      input?.removeEventListener('transitionend', onEnd);
+      const current = generation === this.expandGeneration && this.searchExpanded;
+      log.debug(
+        'Search box slide settled',
+        'event=search.box.expand.settled',
+        `source=${source}`,
+        `elapsedMs=${String(Date.now() - startedAt)}`,
+        `delayMs=${String(delayMs)}`,
+        `timeoutMs=${String(SEARCH_EXPAND_FALLBACK_MS)}`,
+        `generation=${String(generation)}`,
+        `reason=${current ? 'run' : 'stale'}`,
+      );
+      if (current) callback();
+    };
+    const onEnd = (e: TransitionEvent): void => {
+      if (e.propertyName === 'width') finish('transitionend');
+    };
+    input?.addEventListener('transitionend', onEnd);
+    const timer = window.setTimeout(() => finish('timeout'), Math.max(0, SEARCH_EXPAND_FALLBACK_MS - delayMs));
+  }
+
+  private collapseSearch(reason: SearchCollapseReason): void {
+    log.debug('Search box collapsed', 'event=search.box.collapsed', `reason=${reason}`);
     this.searchExpanded = false;
     const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
     if (input) { input.value = ''; input.style.width = ''; input.blur(); }
@@ -370,6 +466,14 @@ export class TabBar {
     btn.classList.toggle('active', this.active === 'search');
   }
 
+  // Release DOM focus so d-pad/OK reach what is below; stay in the box when
+  // nothing there can take focus.
+  private leaveSearchInput(): void {
+    this._focused = false;
+    this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.blur();
+    if (!this.handlers.onSearchLeave()) this.focus();
+  }
+
   private bindSearchInput(input: HTMLInputElement): void {
     input.addEventListener('input', () => {
       this.handlers.onSearchQuery(input.value);
@@ -379,12 +483,10 @@ export class TabBar {
     input.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === 'ArrowDown') {
         e.preventDefault();
-        this._focused = false;
-        input.blur(); // release DOM focus so d-pad/OK reach the results view
-        this.handlers.onSearchLeave();
+        this.leaveSearchInput();
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        this.collapseSearch();
+        this.collapseSearch('escape');
       }
     });
   }
@@ -395,7 +497,11 @@ export class TabBar {
     const slot = this.el?.querySelector<HTMLElement>('.tab-bar-account');
     if (!slot) return;
     if (!this.switcher) {
-      this.switcher = new AccountSwitcher(slot, { onSelect: (id) => this.handlers.onSelectAccount(id) });
+      this.switcher = new AccountSwitcher(slot, {
+        onSelect: (id) => this.handlers.onSelectAccount(id),
+        onMenuOpen: () => this.handlers.onAccountMenuOpen(),
+        onMenuClose: () => this.handlers.onAccountMenuClose(),
+      });
       this.switcher.init();
     }
     this.switcher.setAccounts(this.accounts, this.selectedAccountId);

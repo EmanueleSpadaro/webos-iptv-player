@@ -488,6 +488,63 @@ describe('selected Xtream account id', () => {
   });
 });
 
+describe('StorageService search history', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps the newest search first, trimmed', () => {
+    StorageService.addSearchHistory(' Alpha ');
+    StorageService.addSearchHistory('Bravo');
+    expect(StorageService.getSearchHistory()).toEqual(['Bravo', 'Alpha']);
+  });
+
+  it('ignores a blank query', () => {
+    StorageService.addSearchHistory('   ');
+    expect(StorageService.getSearchHistory()).toEqual([]);
+  });
+
+  it('moves a repeated search to the front, ignoring case', () => {
+    StorageService.addSearchHistory('Alpha');
+    StorageService.addSearchHistory('Bravo');
+    StorageService.addSearchHistory('alpha');
+    expect(StorageService.getSearchHistory()).toEqual(['alpha', 'Bravo']);
+  });
+
+  it('evicts the oldest search past the cap', () => {
+    const max = CONFIG.SEARCH_HISTORY.MAX_ENTRIES;
+    for (let i = 0; i <= max; i++) StorageService.addSearchHistory(`q${i}`);
+    const history = StorageService.getSearchHistory();
+    expect(history).toHaveLength(max);
+    expect(history[0]).toBe(`q${max}`);
+    expect(history).not.toContain('q0');
+  });
+
+  it('clears every search', () => {
+    StorageService.addSearchHistory('Alpha');
+    StorageService.clearSearchHistory();
+    expect(StorageService.getSearchHistory()).toEqual([]);
+  });
+
+  it('ignores a malformed stored value', () => {
+    localStorage.setItem('iptv_search_history', JSON.stringify({ q: 'Alpha' }));
+    expect(StorageService.getSearchHistory()).toEqual([]);
+  });
+
+  it('reports a failed clear instead of throwing', () => {
+    StorageService.addSearchHistory('alpha');
+    const spy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    try {
+      expect(StorageService.clearSearchHistory()).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(StorageService.getSearchHistory()).toEqual(['alpha']);
+    expect(StorageService.clearSearchHistory()).toBe(true);
+    expect(StorageService.getSearchHistory()).toEqual([]);
+  });
+});
+
 const watchlist = (over: Partial<WatchlistEntry> = {}): WatchlistEntry => ({
   accountId: 'x1',
   kind: 'vod',

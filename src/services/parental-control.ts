@@ -335,6 +335,11 @@ class ParentalControlServiceImpl {
       && !this.ruleDecision(request).allowed;
   }
 
+  // Whether a rule guards this content, whatever the current session.
+  protects(request: Pick<ParentalAccessRequest, 'target' | 'parents'>): boolean {
+    return this.enabled && !this.ruleDecision(request).allowed;
+  }
+
   get concealing(): boolean {
     return this.enabled
       && this.config.concealMode === 'hide-locked'

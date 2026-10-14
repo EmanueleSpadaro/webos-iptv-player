@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PlaylistEntry } from '../types';
 import { TabBar, SEARCH_INPUT_MAX_WIDTH } from './tab-bar';
 
@@ -9,6 +9,8 @@ let onSearchQuery: ReturnType<typeof vi.fn>;
 let onSearchLeave: ReturnType<typeof vi.fn>;
 let onSearchClose: ReturnType<typeof vi.fn>;
 let onSelectAccount: ReturnType<typeof vi.fn>;
+let onAccountMenuOpen: ReturnType<typeof vi.fn>;
+let onAccountMenuClose: ReturnType<typeof vi.fn>;
 let onLockNow: ReturnType<typeof vi.fn>;
 let bar: TabBar;
 
@@ -18,12 +20,15 @@ beforeEach(() => {
   onSwitch = vi.fn();
   onEnter = vi.fn();
   onSearchQuery = vi.fn();
-  onSearchLeave = vi.fn();
+  onSearchLeave = vi.fn(() => true);
   onSearchClose = vi.fn();
   onSelectAccount = vi.fn();
+  onAccountMenuOpen = vi.fn();
+  onAccountMenuClose = vi.fn();
   onLockNow = vi.fn();
   bar = new TabBar({
-    onSwitch, onEnter, onSearchQuery, onSearchLeave, onSearchClose, onSelectAccount, onLockNow,
+    onSwitch, onEnter, onSearchQuery, onSearchLeave, onSearchClose, onSelectAccount, onAccountMenuOpen, onAccountMenuClose,
+    onLockNow,
   });
   bar.setSections(true); // Xtream by default
   bar.setShown(true);
@@ -178,6 +183,30 @@ describe('TabBar inline search', () => {
     expect(bar.focused).toBe(false);
   });
 
+  it('keeps the box focused when nothing below can take the handoff', () => {
+    onSearchLeave.mockReturnValue(false);
+    bar.setActive('search');
+    bar.focus();
+    bar.handleAction('select');
+    input()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(onSearchLeave).toHaveBeenCalled();
+    expect(bar.focused).toBe(true);
+    expect(document.activeElement).toBe(input());
+  });
+
+  it('takes D-pad keys back into the box after its input lost DOM focus', () => {
+    bar.setActive('search');
+    bar.focus();
+    bar.handleAction('select');
+    input()!.blur();
+    bar.handleAction('left');
+    expect(document.activeElement).toBe(input());
+    input()!.blur();
+    bar.handleAction('down');
+    expect(onSearchLeave).toHaveBeenCalled();
+    expect(bar.focused).toBe(false);
+  });
+
   it('Escape collapses the box and notifies close', () => {
     bar.setActive('search');
     bar.focus();
@@ -199,6 +228,82 @@ describe('TabBar inline search', () => {
     expect(expanded()).toBe(false);
     expect(onSearchClose).toHaveBeenCalled();
     expect(bar.focused).toBe(true);
+  });
+
+  it('closeSearch() collapses the box from outside and notifies close', () => {
+    bar.setActive('search');
+    bar.focus();
+    bar.handleAction('select');
+    bar.closeSearch();
+    expect(expanded()).toBe(false);
+    expect(onSearchClose).toHaveBeenCalledTimes(1);
+    bar.closeSearch();
+    expect(onSearchClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe('afterSearchExpanded()', () => {
+    const transitionEnd = (propertyName: string) =>
+      input()!.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName }));
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      bar.setActive('search');
+      bar.focus();
+      bar.handleAction('select');
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('waits for the width slide to finish, once', () => {
+      const done = vi.fn();
+      bar.afterSearchExpanded(done);
+      transitionEnd('opacity');
+      expect(done).not.toHaveBeenCalled();
+      transitionEnd('width');
+      expect(done).toHaveBeenCalledTimes(1);
+      vi.runAllTimers();
+      expect(done).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to a timer when no transition ends', () => {
+      const done = vi.fn();
+      bar.afterSearchExpanded(done);
+      vi.advanceTimersByTime(319);
+      expect(done).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(done).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips a box that closed, or one superseded by a later expand', () => {
+      const first = vi.fn();
+      bar.afterSearchExpanded(first);
+      const second = vi.fn();
+      bar.afterSearchExpanded(second);
+      vi.runAllTimers();
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledTimes(1);
+
+      const closed = vi.fn();
+      bar.afterSearchExpanded(closed);
+      bar.closeSearch();
+      vi.runAllTimers();
+      expect(closed).not.toHaveBeenCalled();
+    });
+
+    it('logs how each slide settled for tv.sh diag', () => {
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      bar.afterSearchExpanded(vi.fn());
+      transitionEnd('width');
+      bar.afterSearchExpanded(vi.fn());
+      bar.closeSearch();
+      vi.runAllTimers();
+      const lines = spy.mock.calls.map((args) => args.join(' '));
+      spy.mockRestore();
+      expect(lines.find((l) => l.includes('event=search.box.expand.settled') && l.includes('source=transitionend')))
+        .toContain('reason=run');
+      expect(lines.find((l) => l.includes('event=search.box.collapsed'))).toContain('reason=dismiss');
+      expect(lines.find((l) => l.includes('event=search.box.expand.settled') && l.includes('source=timeout')))
+        .toContain('reason=stale');
+    });
   });
 
   it('a second click on the magnifier collapses the box (toggle)', () => {
@@ -278,6 +383,22 @@ describe('TabBar account switcher', () => {
     bar.handleAction('select'); // choose
     expect(onSelectAccount).toHaveBeenCalledWith('a2');
     expect(document.querySelector('.account-menu')).toBe(null);
+  });
+
+  it('hiding the bar drops search before its account menu closes', () => {
+    bar.setAccounts(A, 'a1');
+    bar.setActive('search');
+    bar.focus();
+    bar.handleAction('select');
+    const avatar = document.querySelector<HTMLElement>('.account-avatar')!;
+    document.elementFromPoint = vi.fn(() => avatar);
+    avatar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(bar.accountMenuOpen).toBe(true);
+    let openAtClose: boolean | null = null;
+    onAccountMenuClose.mockImplementation(() => { openAtClose = bar.searchOpen; });
+    bar.setShown(false);
+    expect(onAccountMenuClose).toHaveBeenCalledTimes(1);
+    expect(openAtClose).toBe(false);
   });
 
   it('hiding the bar closes an open account menu', () => {

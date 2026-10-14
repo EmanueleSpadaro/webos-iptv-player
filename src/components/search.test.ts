@@ -30,7 +30,11 @@ const {
     getSourceUrl: vi.fn(() => 'http://host/epg.xml'),
   },
   reminderMock: { has: vi.fn(() => false), add: vi.fn(), remove: vi.fn() },
-  storageMock: { getCatchupProgressList: vi.fn(() => [] as unknown[]), clearCatchupProgress: vi.fn() },
+  storageMock: {
+    getCatchupProgressList: vi.fn(() => [] as unknown[]),
+    clearCatchupProgress: vi.fn(),
+    addSearchHistory: vi.fn(),
+  },
   archiveMock: {
     load: vi.fn(async () => null as Set<number> | null),
     isAvailable: vi.fn((channel: { catchupSource?: string }) => !!channel.catchupSource),
@@ -109,7 +113,14 @@ beforeEach(() => {
 });
 
 function mkHandlers() {
-  return { onRevealTabBar: vi.fn(), onBack: vi.fn(), onPlayChannel: vi.fn(), onOpenMovie: vi.fn(), onOpenSeries: vi.fn() };
+  return {
+    onRevealTabBar: vi.fn(),
+    onReleaseTabBar: vi.fn(),
+    onBack: vi.fn(),
+    onPlayChannel: vi.fn(),
+    onOpenMovie: vi.fn(),
+    onOpenSeries: vi.fn(),
+  };
 }
 
 async function openWith(opts: { vod?: unknown[]; series?: unknown[] } = {}) {
@@ -333,6 +344,74 @@ describe('Search', () => {
     expect(handlers.onOpenSeries).toHaveBeenCalledWith(account, expect.objectContaining({ seriesId: 's1' }));
   });
 
+  it('focuses a result that appears only once the catalog loads', async () => {
+    let finishVod!: (items: unknown[]) => void;
+    catalogMock.loadAllVodStreams.mockReturnValue(new Promise((resolve) => { finishVod = resolve; }));
+    catalogMock.loadAllSeries.mockResolvedValue([]);
+    const box = document.createElement('input');
+    box.className = 'tab-bar-search-input';
+    document.body.appendChild(box);
+    const handlers = mkHandlers();
+    handlers.onRevealTabBar.mockImplementation(() => box.focus());
+    handlers.onReleaseTabBar.mockImplementation(() => box.blur());
+    const view = new Search(container, handlers);
+    const opening = view.open(account);
+    view.scheduleQuery('movie');
+    view.focusFirstResult();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(container.querySelector('.catalog-tile')).toBeNull();
+    // The remote waits in the box rather than on nothing.
+    expect(document.activeElement).toBe(box);
+
+    finishVod([vod('10', 'Movie One')]);
+    await opening;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(handlers.onReleaseTabBar).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.catalog-tile[data-stream-id="10"]')?.classList.contains('focused')).toBe(true);
+    box.remove();
+  });
+
+  it('leaves the remote where it went while the catalog loaded', async () => {
+    let finishVod!: (items: unknown[]) => void;
+    catalogMock.loadAllVodStreams.mockReturnValue(new Promise((resolve) => { finishVod = resolve; }));
+    catalogMock.loadAllSeries.mockResolvedValue([]);
+    const box = document.createElement('input');
+    box.className = 'tab-bar-search-input';
+    document.body.appendChild(box);
+    const handlers = mkHandlers();
+    handlers.onRevealTabBar.mockImplementation(() => box.focus());
+    const view = new Search(container, handlers);
+    const opening = view.open(account);
+    view.scheduleQuery('movie');
+    view.focusFirstResult();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    box.blur();
+
+    finishVod([vod('10', 'Movie One')]);
+    await opening;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(handlers.onRevealTabBar).toHaveBeenCalledTimes(1);
+    expect(handlers.onReleaseTabBar).not.toHaveBeenCalled();
+    expect(container.querySelector('.catalog-tile.focused')).toBeNull();
+    box.remove();
+  });
+
+  it('hands focus back to the search box when the query matches nothing', async () => {
+    const { view, handlers } = await openWith({ vod: [vod('10', 'Movie One')] });
+    await view.setQuery('zzz');
+    view.focusFirstResult();
+    expect(handlers.onRevealTabBar).toHaveBeenCalledTimes(1);
+  });
+
+  it('records the query when a result is opened', async () => {
+    const { view } = await openWith({ vod: [vod('10', 'Movie One')] });
+    await view.setQuery('  one ');
+    container.querySelector<HTMLElement>('.catalog-tile[data-stream-id="10"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    expect(storageMock.addSearchHistory).toHaveBeenCalledWith('  one ');
+  });
+
   it('searches EPG program metadata and shows its channel and airtime', async () => {
     const channel = chan('Alpha');
     playlistMock.channels = [channel];
@@ -435,9 +514,11 @@ describe('Search', () => {
     row.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     view.handleAction('select');
     expect(document.querySelector('.catchup-resume-prompt')?.classList.contains('hidden')).toBe(false);
+    expect(storageMock.addSearchHistory).not.toHaveBeenCalled();
 
     view.handleAction('select');
     expect(handlers.onPlayChannel).toHaveBeenCalledWith(0, expect.objectContaining({ resumeSecs: 30 }));
+    expect(storageMock.addSearchHistory).toHaveBeenCalledWith('past');
   });
 
   it('does not play an Xtream program whose has_archive flag is false', async () => {
@@ -461,6 +542,7 @@ describe('Search', () => {
 
     expect(handlers.onPlayChannel).not.toHaveBeenCalled();
     expect(toastMock).toHaveBeenCalledWith("This program isn't available for catch-up.");
+    expect(storageMock.addSearchHistory).not.toHaveBeenCalled();
   });
 
   it('toggles a reminder for a future program', async () => {
@@ -477,6 +559,7 @@ describe('Search', () => {
       channelName: 'Alpha',
       title: 'Future Report',
     }));
+    expect(storageMock.addSearchHistory).not.toHaveBeenCalled();
   });
 
   it('opens an Xtream movie result on a pointer click', async () => {

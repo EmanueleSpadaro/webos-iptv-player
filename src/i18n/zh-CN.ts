@@ -37,6 +37,8 @@ export const ZH_CN_MESSAGES = {
   'search.ariaChannels': '搜索频道',
   'search.programs': '节目',
   'search.empty': '未找到相关结果。',
+  'search.recent': '最近搜索',
+  'search.clearHistory': '清除搜索记录',
   'search.liveNow': '正在直播',
   'search.reminderSet': '已设置提醒',
   'search.setReminder': '设置提醒',

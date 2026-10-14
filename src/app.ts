@@ -25,6 +25,7 @@ import { TabBar, type Section, sectionForView } from './components/tab-bar';
 import { Movies } from './components/movies';
 import { Series } from './components/series';
 import { Search } from './components/search';
+import { SearchHistoryDropdown } from './components/search-history-dropdown';
 import { showToast } from './components/toast';
 import { showNumberEntry, hideNumberEntry } from './components/number-entry';
 import { ReminderService } from './services/reminder-service';
@@ -66,6 +67,9 @@ class App {
   private viewStack: ViewName[] = ['channels'];
   private backPressTime = 0;
   private viewBeforeSearch: ViewName | null = null;
+  // Catalog views a search result deep-linked into a detail; restored on the
+  // way back to the view Search opened over.
+  private readonly searchDetailViews = new Set<'movies' | 'series'>();
   private channelList!: ChannelList;
   private player!: Player;
   private livePreview!: LivePreview;
@@ -80,6 +84,7 @@ class App {
   private reminderManagerOrigin: 'settings' | 'epg' = 'settings';
   private tabBar!: TabBar;
   private search!: Search;
+  private historyDropdown!: SearchHistoryDropdown;
   private movies!: Movies;
   private series!: Series;
   private lastSearchQuery = '';
@@ -285,10 +290,16 @@ class App {
     });
     this.search = new Search(this.views.search, {
       onRevealTabBar: () => this.tabBar.focus(),
-      onBack: () => this.goLive(),
+      onReleaseTabBar: () => this.tabBar.blur(),
+      // Step back out to the search box, which a second Back closes.
+      onBack: () => {
+        if (this.tabBar.searchOpen) this.tabBar.focus();
+        else this.goLive();
+      },
       onPlayChannel: (idx, catchup) => { this.tabBar.blur(); this.playChannel(idx, catchup); },
       onOpenMovie: (account, vod) => {
         this.tabBar.blur();
+        this.searchDetailViews.add('movies');
         this.showView('movies');
         this.movies.openItem(account, vod, () => this.showView('search'))
           .catch((err) => log.error(
@@ -300,6 +311,7 @@ class App {
       },
       onOpenSeries: (account, series) => {
         this.tabBar.blur();
+        this.searchDetailViews.add('series');
         this.showView('series');
         this.series.openItem(account, series, () => this.showView('search'))
           .catch((err) => log.error(
@@ -310,13 +322,39 @@ class App {
           ));
       },
     });
+    this.historyDropdown = new SearchHistoryDropdown({
+      onPick: (query) => {
+        this.tabBar.setSearchQuery(query);
+        this.tabBar.blur();
+        this.handleSearchQuery(query);
+        this.search.focusFirstResult();
+      },
+      onCleared: () => this.tabBar.focus(),
+      onReturnToInput: () => this.tabBar.focus(),
+      onDismiss: () => this.tabBar.closeSearch(),
+    });
     this.tabBar = new TabBar({
       onSwitch: (section) => this.switchSection(section),
       onEnter: (section) => this.enterSection(section),
       onSearchQuery: (query) => this.handleSearchQuery(query),
-      onSearchLeave: () => this.search.focusFirstResult(),
+      onSearchLeave: () => {
+        if (this.lastSearchQuery.trim()) {
+          this.search.focusFirstResult();
+          return true;
+        }
+        return this.openHistoryDropdown() && this.historyDropdown.focusFirst();
+      },
       onSearchClose: () => this.handleSearchClose(),
       onSelectAccount: (id) => this.selectXtreamAccount(id),
+      onAccountMenuOpen: () => this.historyDropdown.close('account-menu'),
+      onAccountMenuClose: () => {
+        if (!this.tabBar.searchOpen || !this.tabBar.shown) {
+          this.historyDropdown.close('view-change');
+          return;
+        }
+        this.tabBar.focus();
+        if (!this.lastSearchQuery.trim()) this.openHistoryDropdown();
+      },
       onLockNow: () => ParentalControlService.lock('lock-now'),
     });
     this.tabBar.init();
@@ -983,6 +1021,7 @@ class App {
       ParentalControlService.endManagement();
       this.viewStack = ['settings'];
     }
+    this.historyDropdown?.close('view-change');
     this.livePreview?.beforeViewChange(name);
     if (name !== 'channels' && this.channelList.isEditing) this.channelList.exitEditMode();
     // Re-assert the persisted theme on every view transition. This reverts any
@@ -1076,10 +1115,13 @@ class App {
       this.showView('settings');
       return;
     }
-    // Search: keep the current view; the results view only covers it once a
-    // query is typed (handleSearchQuery). Remember where to return to.
+    // Search: keep the current view, under the recent-searches dropdown; the
+    // results view covers it once a query is typed (handleSearchQuery).
+    // Remember where to return to.
     if (this.viewStack[this.viewStack.length - 1] !== 'search') {
       this.viewBeforeSearch = this.viewStack[this.viewStack.length - 1];
+      // Left over from a search that ended by switching section.
+      this.searchDetailViews.clear();
     }
     // Prep the results (loads the catalog once) into the still-hidden search view.
     this.search.open(this.activeXtreamAccount())
@@ -1089,17 +1131,76 @@ class App {
         'operation=search',
         err,
       ));
+    this.lastSearchQuery = '';
+    this.tabBar.afterSearchExpanded(() => {
+      const skip = this.lastSearchQuery.trim() ? 'typed'
+        : this.historyDropdown.isOpen ? 'open'
+          : this.tabBar.accountMenuOpen ? 'account-menu' : '';
+      if (skip) {
+        log.debug('Recent searches deferred open skipped', 'event=search.history.open.skipped', `reason=${skip}`);
+        return;
+      }
+      this.openHistoryDropdown();
+    });
   }
 
   // The tab bar's search box query changed: show the results view over the
-  // current one while non-empty; restore the underlying view when cleared.
+  // current one while non-empty; when cleared, restore the underlying view
+  // and drop the recent searches back down over it.
   private handleSearchQuery(query: string): void {
     this.lastSearchQuery = query;
     this.search.scheduleQuery(query);
     const hasQuery = query.trim().length > 0;
-    const onSearch = this.viewStack[this.viewStack.length - 1] === 'search';
-    if (hasQuery && !onSearch) this.showView('search');
-    else if (!hasQuery && onSearch) this.showView(this.viewBeforeSearch ?? 'channels');
+    const current = this.viewStack[this.viewStack.length - 1];
+    const onSearch = current === 'search';
+    if (hasQuery) {
+      this.historyDropdown.close('typed');
+      if (!onSearch) this.showView('search');
+      return;
+    }
+    const onResultDetail = (current === 'movies' || current === 'series')
+      && this.searchDetailViews.has(current);
+    if (onSearch || onResultDetail) this.restoreViewBeforeSearch();
+    this.openHistoryDropdown();
+  }
+
+  // Show the view Search opened over. A result's detail left in a catalog view
+  // is dropped, and that view's own browse reloads if it is the one returned to.
+  private restoreViewBeforeSearch(): void {
+    const rv = this.viewBeforeSearch ?? 'channels';
+    const reopen = (rv === 'movies' || rv === 'series') && this.searchDetailViews.has(rv) ? rv : null;
+    this.searchDetailViews.forEach((view) => { if (view !== reopen) this[view].deactivate(); });
+    const details = this.searchDetailViews.size;
+    this.searchDetailViews.clear();
+    this.showView(rv);
+    const account = this.activeXtreamAccount();
+    log.debug(
+      'Search left; view restored',
+      'event=search.view.restored',
+      `source=${rv}`,
+      `count=${String(details)}`,
+      `reason=${reopen ? (account ? 'browse-reopened' : 'no-account') : 'shown'}`,
+      `filter=${this.tabBar.activeSection}`,
+    );
+    if (reopen && account) {
+      this[reopen].open(account).catch((err) => log.error(
+        'Catalog reopen failed',
+        'event=xtream.view.open.failed',
+        `operation=${reopen}`,
+        err,
+      ));
+    }
+  }
+
+  private openHistoryDropdown(): boolean {
+    const anchor = this.tabBar.searchOpen ? this.tabBar.searchAnchor() : null;
+    if (anchor && this.historyDropdown.open(anchor)) return true;
+    log.debug(
+      'Recent searches not opened',
+      'event=search.history.open.skipped',
+      `reason=${anchor ? 'empty' : 'no-anchor'}`,
+    );
+    return false;
   }
 
   // The search box was closed: clear it and return to the view it opened from
@@ -1107,9 +1208,8 @@ class App {
   private handleSearchClose(): void {
     this.search.deactivate();
     this.search.setQuery('');
-    const rv = this.viewBeforeSearch ?? 'channels';
+    this.restoreViewBeforeSearch();
     this.viewBeforeSearch = null;
-    this.showView(rv);
   }
 
   // Show the guide and refresh its data in the background (shared by the EPG
@@ -1235,7 +1335,10 @@ class App {
           'operation=series_reopen',
           err,
         ));
-    } else if (current === 'search') {
+    }
+    // Recent searches keep the box open over Live/Guide, so the stack may not
+    // say 'search' even though the box will search the new account next.
+    if (current === 'search' || this.tabBar.searchOpen) {
       this.search.open(account)
         .then(() => this.search.setQuery(this.lastSearchQuery))
         .catch((err) => log.error(
@@ -1258,7 +1361,8 @@ class App {
     const current = this.viewStack[this.viewStack.length - 1];
     if (current === 'channels') this.channelList.render();
     else if (current === 'epg') this.epgGrid.render(false);
-    else if (current === 'search') {
+    // The search box can be open over another view, with Search still live behind it.
+    if (current === 'search' || this.tabBar.searchOpen) {
       if (concealmentChanged) void this.search.refreshConcealment();
       else this.search.refreshLocks();
     }
@@ -1270,6 +1374,8 @@ class App {
     this.sidebar.refresh();
     ReminderService.refreshParentalCopy();
     this.tabBar?.setParentalSession(ParentalControlService.sessionActive);
+    // The Lock button came or went, shifting the search box under the panel.
+    if (this.historyDropdown?.isOpen) this.openHistoryDropdown();
     if (concealmentChanged) this.livePreview?.refresh();
   }
 
@@ -1364,6 +1470,7 @@ class App {
     if (this.settings.isPromptVisible) return 'settings_prompt';
     if (this.reminderManager.isPromptVisible) return 'reminder_manager_prompt';
     if (this.tabBar.focused) return 'tab_bar';
+    if (this.historyDropdown.isOpen) return 'search_history';
     if (currentView === 'player' && this.player.subtitleOffsetOpen()) return 'subtitle_offset';
     return `view_${currentView}`;
   }
@@ -1413,6 +1520,12 @@ class App {
     // The docked tab bar consumes input while it holds focus.
     if (this.tabBar.focused) {
       this.tabBar.handleAction(action);
+      return;
+    }
+
+    // Recent searches drop over the current view and take its input.
+    if (this.historyDropdown.isOpen) {
+      this.historyDropdown.handleAction(action);
       return;
     }
 

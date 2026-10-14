@@ -165,3 +165,93 @@ test('switching on Live only persists, then applies when Movies is next opened',
   await expect(page.locator('#view-movies .catalog-rail-title')).toContainText('Cat Bravo');
   await expect(page.locator('.catalog-tile[data-item-id="20"]')).toContainText('Bravo Movie');
 });
+
+// Regression: with an empty query, recent searches drop down over Live, so the
+// view stack never reaches 'search' and a switch left Search on the old account.
+// Regression: recent searches waited out the box's slide, then opened over
+// an account menu opened meanwhile.
+test('an account menu opened while the search box slides out keeps recent searches closed', async ({ page }) => {
+  await seedTwoAccounts(page);
+  await routeLiveManifest(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_search_history', JSON.stringify(['movie']));
+  });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'search');
+  await openAccountMenu(page);
+  await expect(page.locator('.search-history-panel')).toBeHidden();
+
+  // Past the slide and its fallback timer.
+  await page.waitForTimeout(600);
+  await expect(page.locator('.account-menu')).toBeVisible();
+  await expect(page.locator('.search-history-panel')).toBeHidden();
+});
+
+test('closing an account menu over the search box hands the remote back to it', async ({ page }) => {
+  await seedTwoAccounts(page);
+  await routeLiveManifest(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_search_history', JSON.stringify(['movie']));
+  });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'search');
+  await expect(page.locator('.search-history-panel')).toBeVisible();
+
+  await openAccountMenu(page);
+  const avatar = await page.locator('.account-avatar').boundingBox();
+  await page.mouse.click(avatar!.x + avatar!.width / 2, avatar!.y + avatar!.height / 2);
+  await expect(page.locator('.account-menu')).toHaveCount(0);
+
+  await expect(page.locator('.tab-bar-search-input')).toBeFocused();
+  await expect(page.locator('.search-history-panel')).toBeVisible();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.search-history-tile').first()).toHaveClass(/focused/);
+});
+
+test('a click past an account menu over recent searches leaves search, not into the view', async ({ page }) => {
+  await seedTwoAccounts(page);
+  await routeLiveManifest(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_search_history', JSON.stringify(['movie']));
+  });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'search');
+  await expect(page.locator('.search-history-panel')).toBeVisible();
+
+  await openAccountMenu(page);
+  await expect(page.locator('.search-history-panel')).toBeHidden();
+  await expect(page.locator('.search-history-scrim')).toBeVisible();
+  await page.mouse.click(400, 600);
+  await expect(page.locator('.account-menu')).toHaveCount(0);
+  await expect(page.locator('.tab-bar-search.expanded')).toHaveCount(0);
+  await expect(page.locator('.search-history-dropdown')).toBeHidden();
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await expect(page.locator('#view-player')).toBeHidden();
+});
+
+test('switching account while recent searches are open moves Search to the new account', async ({ page }) => {
+  await seedTwoAccounts(page);
+  await routeLiveManifest(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_search_history', JSON.stringify(['movie']));
+  });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'search');
+  await expect(page.locator('.search-history-panel')).toBeVisible();
+
+  await openAccountMenu(page);
+  await pickAccount(page, 'a2');
+  await expect(page.locator('.account-avatar')).toHaveText('B');
+
+  // The pointer took focus to the avatar; the box gets the remote back.
+  const input = page.locator('.tab-bar-search-input');
+  await expect(input).toBeFocused();
+  await expect(page.locator('.search-history-panel')).toBeVisible();
+  await page.keyboard.type('Movie');
+  await expect(page.locator('#view-search')).toContainText('Bravo Movie');
+  await expect(page.locator('#view-search')).not.toContainText('Alpha Movie');
+});

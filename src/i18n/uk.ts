@@ -37,6 +37,8 @@ export const UK_MESSAGES = {
   'search.ariaChannels': 'Пошук каналів',
   'search.programs': 'Програми',
   'search.empty': 'Нічого не знайдено.',
+  'search.recent': 'Нещодавні запити',
+  'search.clearHistory': 'Очистити історію пошуку',
   'search.liveNow': 'Зараз в ефірі',
   'search.reminderSet': 'Нагадування встановлено',
   'search.setReminder': 'Установити нагадування',

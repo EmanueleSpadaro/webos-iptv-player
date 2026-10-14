@@ -1014,6 +1014,89 @@ test('relocking drops hidden channels from open search results', async ({ page }
   await expect(rows.filter({ hasText: 'Channel Two' })).toHaveCount(1);
 });
 
+test('relocking while recent searches are open keeps movies in the next search', async ({ page }) => {
+  await seedVodAccount(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_search_history', JSON.stringify(['Movie']));
+  });
+  await page.goto('/');
+  await createPinFromSettings(page);
+  await chooseOption(page, 'parental-conceal', 'hide-locked');
+  await chooseOption(page, 'parental-duration', '5-minutes');
+  await page.locator('[data-parental-back]').click();
+
+  await enterTab(page, 'live');
+  await enterTab(page, 'search');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  const tile = page.locator('.search-history-dropdown .search-history-tile');
+  await expect(tile).toHaveText(['Movie']);
+  await page.locator('.tab-bar [data-lock-now]').click();
+  await expect(page.locator('.tab-bar [data-lock-now]')).toHaveCount(0);
+
+  // The Lock button left, shifting the box; the panel still hangs under it.
+  const panel = page.locator('.search-history-panel');
+  await expect(panel).toBeVisible();
+  await expect.poll(async () => {
+    const [box, hung] = await Promise.all([
+      page.locator('.tab-bar-search').boundingBox(), panel.boundingBox(),
+    ]);
+    return Math.abs(box!.x + box!.width - (hung!.x + hung!.width));
+  }).toBeLessThanOrEqual(1);
+  // The click took focus from the box; the remote gets it back, and its
+  // first press never lands on the clear button.
+  await expect(page.locator('.tab-bar-search-input')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(tile.first()).toHaveClass(/focused/);
+  await expect(page.locator('[data-history-clear]')).not.toHaveClass(/focused/);
+
+  await page.locator('.tab-bar-search-input').fill('Movie');
+  await expect(page.locator('#view-search .catalog-tile[data-stream-id="20"]')).toContainText('Movie Two');
+});
+
+test('a search that opened locked content stays out of recent searches', async ({ page }) => {
+  await seedVodAccount(page);
+  // A live channel gives the guide something to fetch, so it settles.
+  await page.route('**/player_api.php*', (route) => {
+    const action = new URL(route.request().url()).searchParams.get('action');
+    if (action === 'get_live_streams') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+        { stream_id: 1, name: 'Channel One', epg_channel_id: 'c1', category_id: '9' },
+      ]) });
+    }
+    return route.fallback();
+  });
+  await page.goto('/');
+  await createPinFromSettings(page);
+  await page.locator('#parental-kind [data-value="vod"]').click();
+  const catB = page.locator('[data-parental-group]').filter({ hasText: 'Cat B' });
+  await catB.click();
+  await catB.click();
+  await expect(catB.locator('.lock-badge')).toHaveClass(/is-locked/);
+  await chooseOption(page, 'parental-conceal', 'hide-locked');
+  await chooseOption(page, 'parental-duration', '5-minutes');
+  await page.locator('[data-parental-back]').click();
+
+  // The unlock session shows the locked movie; opening it records nothing.
+  await enterTab(page, 'live');
+  await enterTab(page, 'search');
+  const input = page.locator('.tab-bar-search-input');
+  await input.fill('Two');
+  const locked = page.locator('#view-search .catalog-tile[data-stream-id="20"]');
+  await expect(locked).toContainText('Movie Two');
+  await locked.click();
+  await expect(page.locator('#view-movies')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('iptv_search_history'))).toBeNull();
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#view-search')).toBeVisible();
+  await input.fill('One');
+  const open = page.locator('#view-search .catalog-tile[data-stream-id="10"]');
+  await expect(open).toContainText('Movie One');
+  await open.click();
+  await expect(page.locator('#view-movies')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('iptv_search_history'))).toBe('["One"]');
+});
+
 test('channel editing and Reset Customization ask for the PIN while live locks apply', async ({ page }) => {
   await openManagerWithNewPin(page);
   await page.locator('[data-parental-group]').filter({ hasText: 'News' }).click();

@@ -37,6 +37,8 @@ export const IT_MESSAGES = {
   'search.ariaChannels': 'Cerca canali',
   'search.programs': 'Programmi',
   'search.empty': 'Nessun risultato.',
+  'search.recent': 'Ricerche recenti',
+  'search.clearHistory': 'Cancella cronologia delle ricerche',
   'search.liveNow': 'In diretta ora',
   'search.reminderSet': 'Promemoria impostato',
   'search.setReminder': 'Imposta promemoria',

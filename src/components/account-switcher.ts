@@ -7,6 +7,8 @@ import { CHECK_ICON } from './icons';
 
 interface AccountSwitcherHandlers {
   onSelect: (accountId: string) => void;
+  onMenuOpen?: () => void;
+  onMenuClose?: () => void;
 }
 
 // The circular account avatar + dropdown, mounted in a tab-bar slot. Owns its
@@ -49,12 +51,14 @@ export class AccountSwitcher {
     const cur = this.accounts.findIndex((a) => a.id === this.selectedId);
     this.menuIndex = cur >= 0 ? cur : 0;
     this.render();
+    this.handlers.onMenuOpen?.();
   }
 
   closeMenu(): void {
     if (!this.open) return;
     this.open = false;
     this.render();
+    this.handlers.onMenuClose?.();
   }
 
   handleAction(action: Action): void {
@@ -117,6 +121,7 @@ export class AccountSwitcher {
     if (changed) this.selectedId = id;
     this.render();
     if (changed) this.handlers.onSelect(id);
+    this.handlers.onMenuClose?.();
   }
 
   private render(): void {

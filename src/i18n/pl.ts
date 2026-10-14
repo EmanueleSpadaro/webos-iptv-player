@@ -38,6 +38,8 @@ export const PL_MESSAGES = {
   'search.ariaChannels': 'Szukaj kanałów',
   'search.programs': 'Programy',
   'search.empty': 'Brak wyników.',
+  'search.recent': 'Ostatnie wyszukiwania',
+  'search.clearHistory': 'Wyczyść historię wyszukiwania',
   'search.liveNow': 'Teraz na żywo',
   'search.reminderSet': 'Ustawiono przypomnienie',
   'search.setReminder': 'Ustaw przypomnienie',

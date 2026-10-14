@@ -37,6 +37,8 @@ export const PT_BR_MESSAGES = {
   'search.ariaChannels': 'Buscar canais',
   'search.programs': 'Programas',
   'search.empty': 'Nenhum resultado encontrado.',
+  'search.recent': 'Pesquisas recentes',
+  'search.clearHistory': 'Limpar histórico de pesquisa',
   'search.liveNow': 'Ao vivo agora',
   'search.reminderSet': 'Lembrete definido',
   'search.setReminder': 'Definir lembrete',

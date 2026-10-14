@@ -119,6 +119,10 @@ export const CONFIG = {
     MAX_VISIBLE_ITEMS: 50,
   },
 
+  SEARCH_HISTORY: {
+    MAX_ENTRIES: 10,
+  },
+
   CHANNEL_HEALTH: {
     CONCURRENCY: 4,
     TIMEOUT_MS: 8000,

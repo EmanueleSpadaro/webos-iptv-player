@@ -43,6 +43,7 @@
   .player-osd,
   .number-entry,
   .live-preview-message { background: rgb(10, 10, 15); }
+  .search-history-panel { background: var(--bg-secondary); }
 }
 
 /*

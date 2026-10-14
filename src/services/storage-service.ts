@@ -1505,6 +1505,47 @@ export const StorageService = {
     return result.sort((a, b) => b.updatedAt - a.updatedAt);
   },
 
+  getSearchHistory(): string[] {
+    const stored = get<unknown>('search_history', []);
+    if (!Array.isArray(stored)) return [];
+    return stored
+      .filter((q): q is string => typeof q === 'string' && q.trim() !== '')
+      .slice(0, CONFIG.SEARCH_HISTORY.MAX_ENTRIES);
+  },
+
+  // Newest first; a repeat moves to the front and the oldest falls off the end.
+  addSearchHistory(query: string): void {
+    const q = query.trim();
+    if (!q) return;
+    const key = q.toLowerCase();
+    const prior = this.getSearchHistory();
+    const rest = prior.filter(entry => entry.toLowerCase() !== key);
+    const next = [q, ...rest].slice(0, CONFIG.SEARCH_HISTORY.MAX_ENTRIES);
+    set('search_history', next);
+    log.debug(
+      'Search history saved',
+      'event=search.history.saved',
+      `items=${String(next.length)}`,
+      `duplicates=${String(prior.length - rest.length)}`,
+      `dropped=${String(rest.length + 1 - next.length)}`,
+    );
+  },
+
+  clearSearchHistory(): boolean {
+    try {
+      remove('search_history');
+      return true;
+    } catch (err) {
+      log.warn(
+        'Search history clear failed',
+        'event=persistence.search_history.clear.failed',
+        'operation=clear',
+        err,
+      );
+      return false;
+    }
+  },
+
   clearRecentlyWatched(): void {
     if (!userData) {
       remove('recently_watched_live');

@@ -41,6 +41,8 @@ export const EN_MESSAGES = {
   'search.ariaChannels': 'Search channels',
   'search.programs': 'Programs',
   'search.empty': 'No results found.',
+  'search.recent': 'Recent searches',
+  'search.clearHistory': 'Clear search history',
   'search.liveNow': 'Live now',
   'search.reminderSet': 'Reminder set',
   'search.setReminder': 'Set reminder',

@@ -38,6 +38,8 @@ export const TR_MESSAGES = {
   'search.ariaChannels': 'Kanal ara',
   'search.programs': 'Programlar',
   'search.empty': 'Sonuç bulunamadı.',
+  'search.recent': 'Son aramalar',
+  'search.clearHistory': 'Arama geçmişini temizle',
   'search.liveNow': 'Şimdi canlı',
   'search.reminderSet': 'Hatırlatıcı ayarlandı',
   'search.setReminder': 'Hatırlatıcı ayarla',

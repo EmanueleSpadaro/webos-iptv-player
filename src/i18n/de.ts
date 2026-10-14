@@ -37,6 +37,8 @@ export const DE_MESSAGES = {
   'search.ariaChannels': 'Sender durchsuchen',
   'search.programs': 'Sendungen',
   'search.empty': 'Keine Ergebnisse gefunden.',
+  'search.recent': 'Letzte Suchanfragen',
+  'search.clearHistory': 'Suchverlauf löschen',
   'search.liveNow': 'Jetzt live',
   'search.reminderSet': 'Erinnerung eingestellt',
   'search.setReminder': 'Erinnerung einstellen',

@@ -194,3 +194,116 @@
   color: #fff;
   background: var(--accent);
 }
+
+/* Recent searches: a translucent panel hung from the tab bar's empty search
+   box over a dimmed view. The scrim stops below the bar, which stays live.
+   Margins instead of flex `gap` so wrapped rows keep their spacing on
+   gap-less engines; legacy-webos-overrides.css makes the panel opaque where
+   backdrop-filter is missing. */
+.search-history-scrim {
+  position: fixed;
+  top: 96px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 61;
+  background: rgba(0, 0, 0, 0.45);
+}
+.search-history-panel {
+  position: fixed;
+  z-index: 62;
+  box-sizing: border-box;
+  min-width: calc(600px * var(--font-scale));
+  max-width: 1200px;
+  padding: 20px 24px 12px;
+  background: rgb(var(--catalog-hero-scrim-rgb) / 0.82);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+/* Fades in once the search box has slid open (a display toggle restarts it). */
+.search-history-dropdown--menu .search-history-panel {
+  display: none;
+}
+/* Under the tab bar, so the account menu hanging from it stays on top. */
+.search-history-dropdown--menu .search-history-scrim {
+  z-index: 59;
+}
+.search-history-scrim,
+.search-history-panel {
+  animation: search-history-in 150ms ease-out;
+}
+@keyframes search-history-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-history-scrim,
+  .search-history-panel {
+    animation: none;
+  }
+}
+.search-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.search-history-title {
+  margin: 0 24px 0 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.search-history-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.search-history-tile,
+.search-history-clear {
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.search-history-tile {
+  height: 56px;
+  margin: 0 12px 12px 0;
+  padding: 0 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 52px;
+  font-size: 24px;
+  /* Mid-grey veil: lifts a tile off dark panels and sinks it into light
+     ones, where the panel's own tones sit too close together. */
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--text-primary);
+}
+.search-history-clear {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 48px;
+  padding: 0 16px;
+  margin-right: -16px;
+  font-size: 22px;
+  color: var(--text-secondary);
+}
+.search-history-clear svg {
+  width: calc(26px * var(--font-scale));
+  height: calc(26px * var(--font-scale));
+  flex: none;
+  margin-right: 8px;
+}
+.search-history-clear.focused {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger) !important;
+  box-shadow:
+    0 0 0 3px rgb(var(--danger-rgb) / 0.24),
+    0 0 20px rgb(var(--danger-rgb) / 0.35);
+}

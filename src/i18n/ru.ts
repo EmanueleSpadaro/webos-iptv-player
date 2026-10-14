@@ -37,6 +37,8 @@ export const RU_MESSAGES = {
   'search.ariaChannels': 'Поиск каналов',
   'search.programs': 'Передачи',
   'search.empty': 'Ничего не найдено.',
+  'search.recent': 'Недавние запросы',
+  'search.clearHistory': 'Очистить историю поиска',
   'search.liveNow': 'Сейчас в эфире',
   'search.reminderSet': 'Напоминание установлено',
   'search.setReminder': 'Установить напоминание',

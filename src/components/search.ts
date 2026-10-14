@@ -34,7 +34,13 @@ import {
   retainAppWorker,
   runAppWorkerTask,
 } from '../workers/app-worker-client';
-import { isSeriesConcealed, isVodConcealed } from '../services/parental-control';
+import {
+  catalogParentalRequest,
+  isSeriesConcealed,
+  isVodConcealed,
+  liveParentalRequest,
+  ParentalControlService,
+} from '../services/parental-control';
 import type { SearchIndexRequest, SearchQueryResponse } from '../workers/tasks';
 
 const log = createLogger('Search');
@@ -45,6 +51,8 @@ const SEARCH_RAIL_OVERSCAN = 4;
 
 export interface SearchHandlers {
   onRevealTabBar: () => void;
+  // A result arrived after the remote waited in the box: let it go.
+  onReleaseTabBar: () => void;
   onBack: () => void;
   onPlayChannel: (index: number, catchup?: CatchupInfo) => void;
   onOpenMovie: (account: PlaylistEntry, vod: VodItem) => void;
@@ -98,9 +106,12 @@ export class Search {
   private scrollFrame: number | null = null;
   private queryFrame: number | null = null;
   private queryGeneration = 0;
-  private queryPromise: Promise<void> | null = null;
   private queryPending = false;
+  // Down/Enter handed focus over before the results existed; focus them once a query renders.
+  private focusPending = false;
+  private focusWaitingInBox = false;
   private catalogController: AbortController | null = null;
+  private catalogLoading = false;
   private active = false;
   private programIndexGeneration = 0;
   private resultLimit: number = CONFIG.XTREAM.SEARCH_INITIAL_RESULTS;
@@ -141,6 +152,7 @@ export class Search {
     this.cancelScheduledQuery();
     this.catalogController?.abort();
     this.catalogController = null;
+    this.catalogLoading = false;
     if (this.loadedFor !== account?.id) {
       this.allVod = [];
       this.allSeries = [];
@@ -167,12 +179,19 @@ export class Search {
     let catalogLoad: Promise<void> | null = null;
     if (account) {
       this.catalogController = new AbortController();
+      this.catalogLoading = true;
       catalogLoad = this.loadCatalog(
         account,
         this.catalogController.signal,
         sessionId,
         workerReset,
       );
+      const settled = (): void => {
+        if (sessionId !== this.workerSession) return;
+        this.catalogLoading = false;
+        this.applyPendingFocus();
+      };
+      catalogLoad.then(settled, settled);
     }
     const reset = await workerReset;
     if (!reset || !this.active || sessionId !== this.workerSession) return;
@@ -198,6 +217,7 @@ export class Search {
 
   /** The tab bar's search box drives the query; re-render the results for it. */
   async setQuery(query: string): Promise<void> {
+    this.focusPending = false;
     this.cancelScheduledQuery();
     this.query = query;
     this.resultLimit = CONFIG.XTREAM.SEARCH_INITIAL_RESULTS;
@@ -210,6 +230,7 @@ export class Search {
   }
 
   scheduleQuery(query: string): void {
+    this.focusPending = false;
     this.query = query;
     this.resultLimit = CONFIG.XTREAM.SEARCH_INITIAL_RESULTS;
     const generation = ++this.queryGeneration;
@@ -254,6 +275,7 @@ export class Search {
   invalidateCatalog(): void {
     this.catalogController?.abort();
     this.catalogController = null;
+    this.catalogLoading = false;
     this.workerSession++;
     this.allVod = [];
     this.allSeries = [];
@@ -268,16 +290,18 @@ export class Search {
 
   deactivate(): void {
     this.active = false;
+    this.focusPending = false;
     this.programIndexGeneration++;
     this.catalogController?.abort();
     this.catalogController = null;
+    this.catalogLoading = false;
     this.releaseWorker?.();
     this.releaseWorker = null;
     this.queryPending = false;
-    this.queryPromise = null;
   }
 
   handleAction(action: Action): void {
+    this.focusPending = false;
     if (this.resumePrompt.visible) {
       this.resumePrompt.handleAction(action);
       return;
@@ -376,38 +400,70 @@ export class Search {
       const input = el as HTMLInputElement;
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
-    } else if (el.dataset.channelIndex !== undefined) {
-      this.handlers.onPlayChannel(parseInt(el.dataset.channelIndex, 10));
+      return;
+    }
+    // Only a query that opened something is worth remembering, not every keystroke.
+    const query = this.query;
+    if (el.dataset.channelIndex !== undefined) {
+      const index = parseInt(el.dataset.channelIndex, 10);
+      const channel = PlaylistService.channels[index];
+      if (channel) rememberQuery(query, liveParentalRequest(channel));
+      this.handlers.onPlayChannel(index);
     } else if (el.dataset.programIndex !== undefined) {
-      void this.activateProgram(parseInt(el.dataset.programIndex, 10));
+      void this.activateProgram(parseInt(el.dataset.programIndex, 10), query);
     } else if (this.account && el.dataset.streamId !== undefined) {
       const v = this.allVod.find((x) => x.streamId === el.dataset.streamId);
-      if (v) this.handlers.onOpenMovie(this.account, v);
+      if (!v) return;
+      rememberQuery(query, catalogParentalRequest('vod', { ...v, id: v.streamId }));
+      this.handlers.onOpenMovie(this.account, v);
     } else if (this.account && el.dataset.seriesId !== undefined) {
       const s = this.allSeries.find((x) => x.seriesId === el.dataset.seriesId);
-      if (s) this.handlers.onOpenSeries(this.account, s);
+      if (!s) return;
+      rememberQuery(query, catalogParentalRequest('series', { ...s, id: s.seriesId }));
+      this.handlers.onOpenSeries(this.account, s);
     }
   }
 
   /** Move focus into the first result (called when the tab bar's search box
    *  hands off with Enter / Down). */
   focusFirstResult(): void {
-    const focus = (): void => {
-      const first = this.container.querySelector<HTMLElement>(
-        '.search-results [data-focusable]',
-      );
-      if (first) this.nav.focus(first);
-    };
+    this.focusPending = true;
+    this.focusWaitingInBox = false;
     if (this.queryFrame !== null) {
       this.cancelScheduledQuery();
-      void this.startQuery(this.queryGeneration).then(focus);
+      void this.startQuery(this.queryGeneration);
       return;
     }
-    if (this.queryPromise) {
-      void this.queryPromise.then(focus);
+    this.applyPendingFocus();
+  }
+
+  // Waits out superseded queries and a catalog still loading: only a render of
+  // the latest query with something to focus completes the handoff.
+  private applyPendingFocus(): void {
+    if (!this.focusPending || !this.active || this.queryPending) return;
+    const first = this.container.querySelector<HTMLElement>('.search-results [data-focusable]');
+    if (!first && this.catalogLoading) {
+      // Wait in the search box, not on a blank screen, for the catalog.
+      if (!this.focusWaitingInBox) {
+        this.focusWaitingInBox = true;
+        this.handlers.onRevealTabBar();
+      }
       return;
     }
-    focus();
+    const waited = this.focusWaitingInBox;
+    this.focusWaitingInBox = false;
+    this.focusPending = false;
+    // Nothing matched: keep the remote in the search box, not on a blank screen.
+    if (!first) {
+      if (!waited) this.handlers.onRevealTabBar();
+      return;
+    }
+    if (waited) {
+      // The remote moved on from the box meanwhile: don't pull it back.
+      if (!document.activeElement?.classList.contains('tab-bar-search-input')) return;
+      this.handlers.onReleaseTabBar();
+    }
+    this.nav.focus(first);
   }
 
   private posterCell(name: string, poster: string): ReturnType<typeof html> {
@@ -595,18 +651,13 @@ export class Search {
   }
 
   private startQuery(generation: number, preserveOffsets = false): Promise<void> {
-    const promise = this.runWorkerQuery(generation, preserveOffsets).catch(error => {
+    return this.runWorkerQuery(generation, preserveOffsets).catch(error => {
       log.error(
         'Search result update failed',
         'event=search.results.update.failed',
         error,
       );
     });
-    this.queryPromise = promise;
-    void promise.then(() => {
-      if (this.queryPromise === promise) this.queryPromise = null;
-    });
-    return promise;
   }
 
   private async runWorkerQuery(generation: number, preserveOffsets: boolean): Promise<void> {
@@ -663,6 +714,7 @@ export class Search {
     this.queryPending = false;
     if (!preserveOffsets) this.resetVirtualOffsets();
     this.render();
+    this.applyPendingFocus();
   }
 
   private queryLocally(query: string): SearchQueryResponse {
@@ -848,7 +900,7 @@ export class Search {
     `;
   }
 
-  private async activateProgram(index: number): Promise<void> {
+  private async activateProgram(index: number, query: string): Promise<void> {
     const result = this.visiblePrograms[index];
     if (!result) return;
     const { channel, programme } = result;
@@ -896,21 +948,22 @@ export class Search {
         .find(entry => entry.progStart === startMs && !entry.completed);
       if (progress) {
         this.resumePrompt.show(programme.title, progress.position, {
-          onResume: () => this.playProgram(result, progress.position),
+          onResume: () => this.playProgram(result, query, progress.position),
           onStartOver: () => {
             StorageService.clearCatchupProgress(key, startMs);
-            this.playProgram(result);
+            this.playProgram(result, query);
           },
           onCancel: () => { /* keep Search open */ },
         });
         return;
       }
     }
-    this.playProgram(result);
+    this.playProgram(result, query);
   }
 
-  private playProgram(result: ProgramResult, resumeSecs?: number): void {
+  private playProgram(result: ProgramResult, query: string, resumeSecs?: number): void {
     const { channel, channelIndex, programme } = result;
+    rememberQuery(query, liveParentalRequest(channel));
     let catchup: CatchupInfo | undefined;
     if (programme.stop.getTime() <= Date.now() &&
         XtreamArchiveService.isAvailable(channel, programme.start.getTime())) {
@@ -955,13 +1008,13 @@ export class Search {
         )
       : '';
 
-    // The results view is only shown while a query is typed (App.handleSearchQuery),
-    // so the empty-query case renders nothing.
     // Xtream: horizontal poster rails for catalog results. M3U-only channels and
     // EPG programs use compact rows so their metadata remains readable.
-    const resultsBody = !q || this.queryPending
+    const resultsBody = !q
       ? html``
-      : !hasResults
+      : this.queryPending
+        ? html``
+        : !hasResults
         ? html`<p class="catalog-hint search-empty">${t('search.empty')}</p>`
         : isXtream
           ? html`
@@ -1169,4 +1222,10 @@ function indicesOf<T>(items: T[], selected: T[]): number[] {
   const byItem = new Map<T, number>();
   for (let index = 0; index < items.length; index++) byItem.set(items[index], index);
   return selected.map(item => byItem.get(item) ?? -1);
+}
+
+// A query that led to PIN-guarded content stays out of recent searches, which
+// anyone can see once the session is locked again (or the PIN was canceled).
+function rememberQuery(query: string, request: Parameters<typeof ParentalControlService.protects>[0]): void {
+  if (!ParentalControlService.protects(request)) StorageService.addSearchHistory(query);
 }
