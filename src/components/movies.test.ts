@@ -174,6 +174,164 @@ describe('Movies browse + grid', () => {
     expect(handlers.onBack).not.toHaveBeenCalled();
   });
 
+  it('keeps browse resident under a grid and returns to the same tile', async () => {
+    const cats = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), name: `Cat ${i + 1}` }));
+    const { view } = await openWith(cats, [vod('10', 'Movie One')]);
+    const browse = container.querySelector('.catalog-browse');
+    const cat = container.querySelector('.catalog-cat[data-category-id="7"]') as HTMLElement;
+    cat.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    catalogMock.loadVodStreams.mockResolvedValue([vod('20', 'Movie Two', '7')]);
+    view.handleAction('select');
+    await Promise.resolve(); await Promise.resolve();
+
+    expect(container.querySelector('.catalog-browse')).toBe(browse);
+    expect(container.querySelector('.catalog-layer-browse')!.classList)
+      .toContain('catalog-layer-hidden');
+    expect(container.querySelector('.catalog-layer-grid .focused')?.getAttribute('data-item-id'))
+      .toBe('20');
+    view.handleAction('back');
+    expect(container.querySelector('.catalog-browse')).toBe(browse);
+    expect(cat.isConnected).toBe(true);
+    expect(cat.classList).toContain('focused');
+    expect(container.querySelector('.catalog-grid')).toBeNull();
+  });
+
+  it('lands on the next Watchlist tile after removing the opened one', async () => {
+    const saved = (id: string, addedAt: number): WatchlistEntry => ({
+      accountId: 'x1', kind: 'vod', itemId: id, name: `Saved ${id}`, poster: '',
+      rating: '', categoryId: '9', containerExtension: 'mp4', addedAt,
+    });
+    watchlistState.entries = [saved('41', 3), saved('42', 2), saved('43', 1)];
+    catalogMock.loadVodInfo.mockResolvedValue({
+      plot: '', cast: '', director: '', genre: '', releaseDate: '', durationSecs: 0,
+      poster: '', imdbId: '', tmdbId: '', year: 0,
+    });
+    const { view } = await openWith();
+    container.querySelector('[data-watchlist-item="42"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    await Promise.resolve(); await Promise.resolve();
+    container.querySelector('[data-action="watchlist"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    view.handleAction('back');
+
+    expect(container.querySelector('[data-watchlist-item="42"]')).toBeNull();
+    expect(container.querySelector('.catalog-browse .focused')?.getAttribute('data-watchlist-item'))
+      .toBe('43');
+  });
+
+  it('shows browse again after Back from a Search deep link', async () => {
+    catalogMock.loadVodInfo.mockResolvedValue({
+      plot: '', cast: '', director: '', genre: '', releaseDate: '', durationSecs: 0,
+      poster: '', imdbId: '', tmdbId: '', year: 0,
+    });
+    const { view } = await openWith([{ id: '1', name: 'Cat A' }], [vod('10', 'Movie One'), vod('11', 'Movie Two')]);
+    const tile = container.querySelector('.catalog-tile[data-item-id="11"]') as HTMLElement;
+    tile.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    const back = vi.fn();
+    await view.openItem(account, vod('99', 'Found Movie'), back);
+    expect(container.querySelector('.movies-detail')).not.toBeNull();
+    view.handleAction('back');
+
+    expect(back).toHaveBeenCalled();
+    expect(container.querySelector('.catalog-layer-browse')!.classList)
+      .not.toContain('catalog-layer-hidden');
+    expect(container.querySelector('.movies-detail')).toBeNull();
+    expect(tile.classList).toContain('focused');
+  });
+
+  it('reloads a browse a Search deep link interrupted once it is shown again', async () => {
+    catalogMock.loadVodInfo.mockResolvedValue({
+      plot: '', cast: '', director: '', genre: '', releaseDate: '', durationSecs: 0,
+      poster: '', imdbId: '', tmdbId: '', year: 0,
+    });
+    catalogMock.loadVodCategories.mockReturnValueOnce(new Promise(() => {}));
+    catalogMock.loadVodStreams.mockResolvedValue([vod('10', 'Movie One')]);
+    const view = new Movies(container, { onRevealTabBar: vi.fn(), onBack: vi.fn(), onPlayVod: vi.fn() });
+    void view.open(account);
+    await view.openItem(account, vod('99', 'Found Movie'), vi.fn());
+    catalogMock.loadVodCategories.mockResolvedValue([{ id: '1', name: 'Cat A' }]);
+    view.handleAction('back');
+    await Promise.resolve(); await Promise.resolve();
+    // Not behind Search: only once the section is shown again.
+    expect(catalogMock.loadVodCategories).toHaveBeenCalledTimes(1);
+    view.ensureLoaded(account);
+    await vi.waitFor(() => expect(container.querySelector('.catalog-browse')).not.toBeNull());
+    expect(catalogMock.loadVodCategories).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('.catalog-tile[data-item-id="10"]')).not.toBeNull();
+  });
+
+  it('keeps a second deep-linked detail when the section is shown again', async () => {
+    catalogMock.loadVodInfo.mockResolvedValue({
+      plot: '', cast: '', director: '', genre: '', releaseDate: '', durationSecs: 0,
+      poster: '', imdbId: '', tmdbId: '', year: 0,
+    });
+    catalogMock.loadVodCategories.mockReturnValueOnce(new Promise(() => {}));
+    const view = new Movies(container, { onRevealTabBar: vi.fn(), onBack: vi.fn(), onPlayVod: vi.fn() });
+    void view.open(account);
+    await view.openItem(account, vod('98', 'First Find'), vi.fn());
+    view.handleAction('back');
+    await view.openItem(account, vod('99', 'Second Find'), vi.fn());
+    view.ensureLoaded(account);
+
+    expect(catalogMock.loadVodCategories).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.movies-detail')?.textContent).toContain('Second Find');
+  });
+
+  it('reopens browse on the active account when the section is shown again', async () => {
+    const { view } = await openWith();
+    view.ensureLoaded(account);
+    expect(catalogMock.loadVodCategories).toHaveBeenCalledTimes(1);
+
+    const other: PlaylistEntry = { ...account, id: 'x2' };
+    view.ensureLoaded(other);
+    await vi.waitFor(() => expect(catalogMock.loadVodCategories).toHaveBeenCalledTimes(2));
+    expect(catalogMock.loadVodCategories).toHaveBeenLastCalledWith(other, expect.anything());
+  });
+
+  it('stays in browse when Back cancels a category grid that is still loading', async () => {
+    const cats = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), name: `Cat ${i + 1}` }));
+    const { view } = await openWith(cats, [vod('10', 'Movie One')]);
+    const cat = container.querySelector('.catalog-cat[data-category-id="7"]') as HTMLElement;
+    cat.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    let resolve!: (items: unknown[]) => void;
+    catalogMock.loadVodStreams.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    view.handleAction('select');
+    expect(container.querySelector('.catalog-layer-grid .catalog-loading')).not.toBeNull();
+    // The hidden category tile no longer takes OK while the grid loads.
+    expect(container.querySelector('.focused')).toBeNull();
+    const loads = catalogMock.loadVodStreams.mock.calls.length;
+    view.handleAction('select');
+    expect(catalogMock.loadVodStreams).toHaveBeenCalledTimes(loads);
+    view.handleAction('back');
+    resolve([vod('20', 'Movie Two', '7')]);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    expect(container.querySelector('.catalog-grid')).toBeNull();
+    expect(container.querySelector('.catalog-layer-browse')!.classList)
+      .not.toContain('catalog-layer-hidden');
+    expect(cat.classList).toContain('focused');
+  });
+
+  it('finds the origin rail of a category id that needs selector escaping', async () => {
+    catalogMock.loadVodInfo.mockResolvedValue({
+      plot: '', cast: '', director: '', genre: '', releaseDate: '', durationSecs: 0,
+      poster: '', imdbId: '', tmdbId: '', year: 0,
+    });
+    const id = 'q"1\\';
+    const { view } = await openWith([{ id, name: 'Cat Q' }], [vod('10', 'Movie One', id), vod('11', 'Movie Two', id)]);
+    const tile = container.querySelector('.catalog-tile[data-item-id="11"]') as HTMLElement;
+    tile.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    await Promise.resolve(); await Promise.resolve();
+    // Browse rebuilds the tile as a new node, so focus must find it by rail.
+    tile.remove();
+    expect(() => view.handleAction('back')).not.toThrow();
+    expect(container.querySelector('.catalog-browse .focused')?.getAttribute('data-item-id'))
+      .toBe('11');
+  });
+
   it('virtualizes 50,000 categories and a 50,000-item grid', async () => {
     const cats = Array.from(
       { length: 50_000 },

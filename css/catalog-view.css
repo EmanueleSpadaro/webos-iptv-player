@@ -6,6 +6,17 @@
   color: var(--text-secondary);
 }
 
+/* Browse, grid, and detail stack as layers. A hidden layer keeps its layout
+   (and so its scroll offsets) instead of dropping to display: none. */
+.catalog-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+.catalog-layer-hidden { visibility: hidden; }
+
 .catalog-view {
   width: 1920px;
   height: 100%;

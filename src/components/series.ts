@@ -76,14 +76,14 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
 
   protected continueRail(): Safe | '' {
     return this.resume.length
-      ? this.rail(t('catalog.continueWatching'), this.resume.map((r) => this.resumeTile(r)))
+      ? this.rail('continue', t('catalog.continueWatching'), this.resume.map((r) => this.resumeTile(r)))
       : '';
   }
 
   protected watchlistRail(): Safe | '' {
     const entries = this.visibleWatchlist('series');
     return entries.length
-      ? this.rail(t('common.watchlist'), entries.map((entry) => this.tile(this.watchlistEntryToSeries(entry))))
+      ? this.rail('watchlist', t('common.watchlist'), entries.map((entry) => this.tile(this.watchlistEntryToSeries(entry))))
       : '';
   }
 
@@ -142,7 +142,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     this.detailController = new AbortController();
     const signal = this.detailController.signal;
     this.currentSeries = series;
-    this.mode = 'detail';
+    this.enterDetail();
     this.currentInfo = null;
     this.selectedSeason = 0;
     this.episodeFocusIndex = 0;
@@ -303,8 +303,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     }
     const prevKey = this.nav.focused?.getAttribute('data-key') ?? null;
     const watchlisted = StorageService.isWatchlisted(a.id, 'series', series.seriesId);
-    const previousScroller = this.container.querySelector<HTMLElement>('.series-detail');
-    const previousEpisodes = this.container.querySelector<HTMLElement>('.series-episodes');
+    const previousScroller = this.layer('detail').querySelector<HTMLElement>('.series-detail');
+    const previousEpisodes = this.layer('detail').querySelector<HTMLElement>('.series-episodes');
     this.episodeVirtualizer.setLeadingSize(
       this.episodeListStart(previousScroller, previousEpisodes),
     );
@@ -324,7 +324,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     }
     const episodeRange = this.episodeVirtualizer.getRange(episodes.length, episodeViewport);
 
-    morph(this.container, html`
+    morph(this.layer('detail'), html`
       <div class="catalog-view series-detail" data-nav-container>
         <div class="series-detail-head">
           <div class="detail-poster-wrap series-detail-poster">${this.posterCell(series.name, poster)}</div>
@@ -381,7 +381,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       </div>
     `);
     const measuredSizes = Array.from(
-      this.container.querySelectorAll<HTMLElement>('.series-episode-cell'),
+      this.layer('detail').querySelectorAll<HTMLElement>('.series-episode-cell'),
     ).map(cell => ({
       cell,
       index: parseInt(cell.dataset.episodeIndex || '-1', 10),
@@ -398,8 +398,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       this.renderDetail(restoreFocus);
       return;
     }
-    const episodeList = this.container.querySelector<HTMLElement>('.series-episodes');
-    const scroller = this.container.querySelector<HTMLElement>('.series-detail');
+    const episodeList = this.layer('detail').querySelector<HTMLElement>('.series-episodes');
+    const scroller = this.layer('detail').querySelector<HTMLElement>('.series-detail');
     if (scroller) {
       this.episodeVirtualizer.setLeadingSize(this.episodeListStart(scroller, episodeList));
       this.scrollGuard.syncOffset(
@@ -413,7 +413,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       return;
     }
     const restore = prevKey
-      ? this.container.querySelector<HTMLElement>(`[data-focusable][data-key="${prevKey}"]`)
+      ? this.focusableByKey(this.layer('detail'), prevKey)
       : null;
     if (restore) this.nav.focus(restore);
     else if (!this.nav.focusFirst()) this.nav.focus(null);
@@ -428,7 +428,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     const current = parseInt(rawIndex, 10);
     const next = current + (action === 'up' ? -1 : 1);
     if (next < 0 || next >= episodes.length) return false;
-    const list = this.container.querySelector<HTMLElement>('.series-detail');
+    const list = this.layer('detail').querySelector<HTMLElement>('.series-detail');
     this.episodeFocusIndex = next;
     this.episodeVirtualizer.ensureVisible(
       next,
@@ -436,7 +436,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     );
     this.renderDetail(false);
     this.nav.focus(
-      this.container.querySelector<HTMLElement>(
+      this.layer('detail').querySelector<HTMLElement>(
         `[data-episode-index="${next}"] [data-focusable]`,
       ),
     );

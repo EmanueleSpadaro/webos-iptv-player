@@ -70,14 +70,14 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
 
   protected continueRail(): Safe | '' {
     return this.resume.length
-      ? this.rail(t('catalog.continueWatching'), this.resume.map((r) => this.tile(this.resumeToVod(r.itemId)!)))
+      ? this.rail('continue', t('catalog.continueWatching'), this.resume.map((r) => this.tile(this.resumeToVod(r.itemId)!)))
       : '';
   }
 
   protected watchlistRail(): Safe | '' {
     const entries = this.visibleWatchlist('vod');
     return entries.length
-      ? this.rail(t('common.watchlist'), entries.map((entry) => this.watchlistTile(entry)))
+      ? this.rail('watchlist', t('common.watchlist'), entries.map((entry) => this.watchlistTile(entry)))
       : '';
   }
 
@@ -156,7 +156,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
     const signal = this.detailController.signal;
     this.openedFromWatchlist = fromWatchlist;
     this.currentVod = vod;
-    this.mode = 'detail';
+    this.enterDetail();
     this.currentInfo = null;
     this.renderDetail();
     try {
@@ -235,7 +235,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
     const watchlisted = StorageService.isWatchlisted(a.id, 'vod', vod.streamId);
 
     const prevKey = this.nav.focused?.getAttribute('data-key') ?? null;
-    morph(this.container, html`
+    morph(this.layer('detail'), html`
       <div class="catalog-view movies-detail" data-nav-container>
         <div class="detail-poster-wrap">${this.posterCell(vod.name, poster)}</div>
         <div class="detail-body">
@@ -261,7 +261,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
       </div>
     `);
     const restore = prevKey
-      ? this.container.querySelector<HTMLElement>(`[data-focusable][data-key="${prevKey}"]`)
+      ? this.focusableByKey(this.layer('detail'), prevKey)
       : null;
     if (restore) this.nav.focus(restore);
     else if (!this.nav.focusFirst()) this.nav.focus(null);

@@ -242,6 +242,10 @@ test('emptying the box on a result detail over Movies brings back its browse', a
   await page.goto('/');
   await enterTab(page, 'movies');
   await expect(page.locator('#view-movies .catalog-rail')).not.toHaveCount(0);
+  // The resident browse must come back as the same node, not be rebuilt by a
+  // reload (morph keeps the node but drops unknown attributes, so use a property).
+  await page.locator('#view-movies .catalog-browse')
+    .evaluate((el) => { (el as HTMLElement & { testMark?: boolean }).testMark = true; });
   await enterSearch(page);
   await openMovieResult(page, 'one');
 
@@ -251,6 +255,36 @@ test('emptying the box on a result detail over Movies brings back its browse', a
   await expect(page.locator('#view-movies')).toBeVisible();
   await expect(page.locator('#view-movies .detail-plot')).toHaveCount(0);
   await expect(page.locator('#view-movies .catalog-rail')).not.toHaveCount(0);
+  expect(await page.locator('#view-movies .catalog-browse')
+    .evaluate((el) => (el as HTMLElement & { testMark?: boolean }).testMark)).toBe(true);
+});
+
+test('clearing Search reloads a Movies browse its deep link interrupted', async ({ page }) => {
+  await seedSearch(page);
+  await routeLiveManifest(page);
+  // Hold the first Movies category load so the deep link interrupts it.
+  let held = false;
+  await page.route('**/player_api.php*', (route) => {
+    if (!held && route.request().url().includes('get_vod_categories')) {
+      held = true;
+      return;
+    }
+    return route.fallback();
+  });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'movies');
+  await expect(page.locator('#view-movies .catalog-loading')).toBeVisible();
+  await enterSearch(page);
+
+  await openMovieResult(page, 'one');
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 461, bubbles: true })));
+  await expect(page.locator('#view-search')).toBeVisible();
+
+  await page.locator('.tab-bar-search-input').fill('');
+  await expect(page.locator('#view-movies')).toBeVisible();
+  await expect(page.locator('#view-movies .catalog-browse .catalog-tile[data-item-id="10"]'))
+    .toContainText('Movie One');
 });
 
 test('a movie result opened by POINTER can then be played by pointer (tab-bar focus is dropped)', async ({ page }) => {

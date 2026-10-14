@@ -24,7 +24,7 @@ const SAMPLE_ASS = [
 // .srt/.ass URLs serve small bodies.
 async function seedMovies(
   page: import('@playwright/test').Page,
-  opts: { subtitles?: boolean; ass?: boolean } = {},
+  opts: { subtitles?: boolean; ass?: boolean; streams?: number } = {},
 ): Promise<void> {
   await page.route('**/get.php*', (route) =>
     route.fulfill({ status: 200, contentType: 'application/x-mpegurl', body: SAMPLE_M3U }));
@@ -36,9 +36,11 @@ async function seedMovies(
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ category_id: '1', category_name: 'Cat A' }]) });
     }
     if (url.includes('get_vod_streams')) {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
-        { stream_id: 10, name: 'Movie One', stream_icon: '', container_extension: 'mp4', category_id: '1' },
-      ]) });
+      const streams = opts.streams
+        ? Array.from({ length: opts.streams }, (_, i) => (
+          { stream_id: 100 + i, name: `Movie ${String(i)}`, stream_icon: '', container_extension: 'mp4', category_id: '1' }))
+        : [{ stream_id: 10, name: 'Movie One', stream_icon: '', container_extension: 'mp4', category_id: '1' }];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(streams) });
     }
     if (url.includes('get_vod_info')) {
       const info: Record<string, unknown> = { plot: 'A plot.', duration_secs: 3600 };
@@ -135,6 +137,42 @@ test('Back walks Movies detail -> browse -> Live instead of ejecting', async ({ 
   // Second Back from the browse top level returns to Live.
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 461, bubbles: true })));
   await expect(page.locator('#view-channels')).toBeVisible();
+});
+
+test('Back from a detail finds browse scrolled and focused as it was left', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('iptv_animation_mode', JSON.stringify('full')));
+  await seedMovies(page, { streams: 20 });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'movies');
+  await expect(page.locator('html')).toHaveAttribute('data-animation', 'full');
+  await page.locator('.catalog-tile[data-item-id="100"]')
+    .evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+  for (let i = 0; i < 15; i++) await page.keyboard.press('ArrowRight');
+  const tile = page.locator('#view-movies .catalog-tile[data-item-id="115"]');
+  await expect(tile).toHaveClass(/focused/);
+  const track = page.locator('#view-movies .catalog-browse .catalog-rail-track').first();
+  // Let the smooth scroll settle before recording where browse was left.
+  let left = -1;
+  await expect.poll(async () => {
+    const now = await track.evaluate((el) => el.scrollLeft);
+    const settled = now > 0 && now === left;
+    left = now;
+    return settled;
+  }, { intervals: [150] }).toBe(true);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#view-movies .detail-plot')).toContainText('A plot.');
+  // Read in the same task as Back: a rebuilt browse would sit at offset 0
+  // and only glide back to the tile afterward.
+  const back = await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 461, bubbles: true }));
+    const el = document.querySelector<HTMLElement>('#view-movies .catalog-tile[data-item-id="115"]')!;
+    return {
+      focused: el.classList.contains('focused'),
+      scrollLeft: el.parentElement!.scrollLeft,
+    };
+  });
+  expect(back).toEqual({ focused: true, scrollLeft: left });
 });
 
 test('VOD playback suppresses the live channel sidebar and shows a VOD-only menu at the pointer edges', async ({ page }) => {

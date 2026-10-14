@@ -1165,31 +1165,27 @@ class App {
   }
 
   // Show the view Search opened over. A result's detail left in a catalog view
-  // is dropped, and that view's own browse reloads if it is the one returned to.
+  // is dropped; the returned-to catalog keeps its browse unless a deep link
+  // interrupted its load or the account changed under Search.
   private restoreViewBeforeSearch(): void {
     const rv = this.viewBeforeSearch ?? 'channels';
-    const reopen = (rv === 'movies' || rv === 'series') && this.searchDetailViews.has(rv) ? rv : null;
+    const catalog = rv === 'movies' || rv === 'series' ? rv : null;
+    const reopen = catalog && this.searchDetailViews.has(catalog) ? catalog : null;
     this.searchDetailViews.forEach((view) => { if (view !== reopen) this[view].deactivate(); });
     const details = this.searchDetailViews.size;
     this.searchDetailViews.clear();
     this.showView(rv);
+    if (reopen) this[reopen].leaveDeepLink();
     const account = this.activeXtreamAccount();
     log.debug(
       'Search left; view restored',
       'event=search.view.restored',
       `source=${rv}`,
       `count=${String(details)}`,
-      `reason=${reopen ? (account ? 'browse-reopened' : 'no-account') : 'shown'}`,
+      `reason=${reopen ? (account ? 'browse-restored' : 'no-account') : 'shown'}`,
       `filter=${this.tabBar.activeSection}`,
     );
-    if (reopen && account) {
-      this[reopen].open(account).catch((err) => log.error(
-        'Catalog reopen failed',
-        'event=xtream.view.open.failed',
-        `operation=${reopen}`,
-        err,
-      ));
-    }
+    if (catalog) this[catalog].ensureLoaded(account);
   }
 
   private openHistoryDropdown(): boolean {

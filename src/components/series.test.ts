@@ -156,6 +156,32 @@ describe('Series browse + grid', () => {
     expect(handlers.onBack).not.toHaveBeenCalled();
   });
 
+  it('returns from a removed Watchlist series to its rail neighbor, not its category twin', async () => {
+    const saved = (id: string, addedAt: number): WatchlistEntry => ({
+      accountId: 'x1', kind: 'series', itemId: id, name: `Series ${id}`, poster: '',
+      rating: '', categoryId: '1', addedAt,
+    });
+    watchlistState.entries = [saved('s0', 3), saved('s1', 2), saved('s2', 1)];
+    catalogMock.loadSeriesInfo.mockResolvedValue({ seasons: [], episodesBySeason: {} });
+    const { view } = await openWith(
+      [{ id: '1', name: 'Cat A' }],
+      [series('s0', 'Series s0'), series('s1', 'Series s1'), series('s2', 'Series s2')],
+    );
+    const watchlist = container.querySelector('[data-rail-key="watchlist"]')!;
+    watchlist.querySelector('[data-item-id="s1"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    await Promise.resolve(); await Promise.resolve();
+    container.querySelector('[data-action="watchlist"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    view.handleAction('back');
+
+    const focused = container.querySelector<HTMLElement>('.catalog-browse .focused');
+    expect(focused?.closest('[data-rail-key]')?.getAttribute('data-rail-key')).toBe('watchlist');
+    expect(focused?.dataset.itemId).toBe('s2');
+  });
+
   it('goes back to Live from the browse top level', async () => {
     const { view, handlers } = await openWith();
     view.handleAction('back');

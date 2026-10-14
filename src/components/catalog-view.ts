@@ -44,10 +44,19 @@ export interface CatalogHandlers {
 
 type Mode = 'browse' | 'grid' | 'detail';
 
+interface BrowseReturn {
+  el: HTMLElement;
+  railKey: string;
+  index: number;
+}
+
 // Shared browse/grid/detail machinery for the Xtream catalog sections (Movies,
 // Series): a hero + poster rails browse view, a per-category poster grid, and a
 // detail screen, driven by one SpatialNav across all modes. Up at the top row
 // hands off to the tab bar; Back walks detail -> grid -> browse -> Live.
+// Each mode renders into its own stacked layer. Browse stays resident (hidden,
+// not rebuilt) while a grid or detail is open, so Back finds its rails, scroll
+// positions, and focused tile exactly as they were.
 // Subclasses supply the catalog loaders, item accessors, and the detail
 // rendering / playback specifics.
 export abstract class CatalogView<C extends { id: string; name: string }, I> {
@@ -78,9 +87,22 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   protected readonly scrollGuard = new VirtualScrollGuard();
   private gridSnapTimer: ReturnType<typeof setTimeout> | null = null;
   private requestController: AbortController | null = null;
+  private readonly layers: Record<Mode, HTMLElement>;
+  private browseReturn: BrowseReturn | null = null;
+  private gridRequest = 0;
+  private browseStale = false;
 
   constructor(protected container: HTMLElement, protected handlers: CatalogHandlers) {
+    const layer = (mode: Mode): HTMLElement => {
+      const el = document.createElement('div');
+      el.className = `catalog-layer catalog-layer-${mode}`;
+      if (mode !== 'browse') el.classList.add('catalog-layer-hidden');
+      container.appendChild(el);
+      return el;
+    };
+    this.layers = { browse: layer('browse'), grid: layer('grid'), detail: layer('detail') };
     this.nav = new SpatialNav(container, (el) => this.onFocusChanged(el));
+    this.nav.setRestrict(this.layers.browse);
     this.container.addEventListener('mouseleave', () => this.nav.clearHighlight());
     this.container.addEventListener('scroll', (event: Event) => {
       const target = event.target as HTMLElement;
@@ -100,7 +122,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
       if (this.mode !== 'grid' || !target.classList.contains('catalog-grid')) return;
       const scrollTop = this.scrollGuard.readUserOffset(target, 'vertical');
       if (scrollTop === null) return;
-      const track = this.container.querySelector<HTMLElement>('.catalog-grid-track');
+      const track = this.layers.grid.querySelector<HTMLElement>('.catalog-grid-track');
       this.gridVirtualizer.setScrollOffset(
         Math.max(0, scrollTop - this.gridTrackStart(target, track)),
       );
@@ -149,6 +171,75 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   // Hero when no rail item exists (Movies falls back to a resumed item); default none.
   protected heroFallback(): I | null { return null; }
 
+  // The active mode's layer; hidden layers keep their DOM but never take focus.
+  protected layer(mode: Mode = this.mode): HTMLElement {
+    return this.layers[mode];
+  }
+
+  protected showLayer(mode: Mode): void {
+    if (this.mode === 'browse' && mode !== 'browse') this.leaveBrowse();
+    this.mode = mode;
+    (Object.keys(this.layers) as Mode[]).forEach((key) => {
+      this.layers[key].classList.toggle('catalog-layer-hidden', key !== mode);
+    });
+    this.nav.setRestrict(this.layers[mode]);
+  }
+
+  // Keys embed provider ids, so compare rather than build a selector from them.
+  protected focusableByKey(root: HTMLElement, key: string): HTMLElement | null {
+    return Array.from(root.querySelectorAll<HTMLElement>('[data-focusable][data-key]'))
+      .find((el) => el.getAttribute('data-key') === key) ?? null;
+  }
+
+  protected clearLayer(mode: Mode): void {
+    morph(this.layers[mode], html``);
+  }
+
+  // Detail entry for subclasses: remembers where browse focus was first.
+  protected enterDetail(): void {
+    this.showLayer('detail');
+  }
+
+  private leaveBrowse(): void {
+    const el = this.nav.focused;
+    if (!el || !this.layers.browse.contains(el)) return;
+    const rail = el.closest<HTMLElement>('[data-rail-key]');
+    const tiles = rail
+      ? Array.from(rail.querySelectorAll<HTMLElement>('[data-focusable]'))
+      : [];
+    this.browseReturn = {
+      el,
+      railKey: rail?.dataset.railKey ?? '',
+      index: Math.max(0, tiles.indexOf(el)),
+    };
+  }
+
+  // Back lands on the tile browse was left from. A tile that is gone (e.g. a
+  // title removed from the Watchlist) hands focus to its neighbor in the same
+  // rail, and a rail that is gone falls back to the first tile.
+  private restoreBrowseFocus(): void {
+    const origin = this.browseReturn;
+    this.browseReturn = null;
+    const browse = this.layers.browse;
+    if (origin && origin.el.isConnected && browse.contains(origin.el)) {
+      this.nav.focus(origin.el);
+      return;
+    }
+    // Rail keys embed provider category ids, so compare rather than build a selector.
+    const rail = origin?.railKey
+      ? Array.from(browse.querySelectorAll<HTMLElement>('[data-rail-key]'))
+        .find((el) => el.dataset.railKey === origin.railKey) ?? null
+      : null;
+    const tiles = rail
+      ? Array.from(rail.querySelectorAll<HTMLElement>('[data-focusable]'))
+      : [];
+    if (origin && tiles.length) {
+      this.nav.focus(tiles[Math.min(origin.index, tiles.length - 1)]);
+      return;
+    }
+    if (!this.nav.focusFirst()) this.nav.focus(null);
+  }
+
   setAccount(account: PlaylistEntry): void {
     if (this.account?.id !== account.id) {
       this.requestController?.abort();
@@ -193,7 +284,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const signal = this.beginRequests();
     this.account = account;
     this.deepLinkBack = null;
-    this.mode = 'browse';
+    this.browseReturn = null;
+    this.browseStale = false;
+    this.clearLayer('grid');
+    this.clearLayer('detail');
     this.categories = [];
     this.railGroups = [];
     this.itemsByCategory = {};
@@ -201,7 +295,8 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     this.categoryVirtualizer.setScrollOffset(0);
     this.gridVirtualizer.setScrollOffset(0);
     this.resume = this.visibleResume(account.id);
-    this.renderLoading();
+    this.clearLayer('browse');
+    this.renderLoading('browse');
     try {
       const categories = await this.loadCategories(account, signal);
       if (signal.aborted || this.account?.id !== account.id) return;
@@ -236,9 +331,57 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   // to the caller via onDetailBack (no browse is loaded underneath).
   async openItem(account: PlaylistEntry, item: I, onDetailBack: () => void): Promise<void> {
     this.beginRequests();
+    // Showing this detail; deep-link Back recomputes whether browse is stale.
+    this.browseStale = false;
+    if (this.account && this.account.id !== account.id
+        && this.layers.browse.querySelector('.catalog-view')) {
+      this.gridCategory = null;
+      this.browseReturn = null;
+      this.clearLayer('grid');
+      morph(this.layers.browse, this.loadingMarkup());
+    }
     this.account = account;
     this.deepLinkBack = onDetailBack;
     await this.openDetail(item);
+  }
+
+  // A Search deep link opens over whatever this section last showed. Put that
+  // back, so showing the section again never lands on an empty detail layer.
+  // A detail the deep link replaced is not restored: Back skips to its grid or
+  // browse.
+  private restoreBeneathDeepLink(): void {
+    if (this.gridCategory && this.layers.grid.querySelector('.catalog-grid')) {
+      this.renderGrid();
+      return;
+    }
+    this.gridCategory = null;
+    this.clearLayer('grid');
+    if (this.layers.browse.querySelector('.catalog-browse')) {
+      this.renderBrowse();
+      return;
+    }
+    // The deep link aborted a browse load (or switched accounts). Reload it
+    // only if the section is shown again (ensureLoaded), not behind Search.
+    this.browseStale = !!this.layers.browse.querySelector('.catalog-loading');
+    this.showLayer('browse');
+  }
+
+  // For re-showing the section without open(), e.g. when Search closes: reload
+  // an interrupted browse, or one left on an account no longer active.
+  ensureLoaded(account: PlaylistEntry | null): void {
+    if (!account) return;
+    if (this.browseStale || this.account?.id !== account.id) void this.open(account);
+  }
+
+  // Search is closing over this section: drop a deep-linked detail it left
+  // here and show what it opened over.
+  leaveDeepLink(): void {
+    if (!this.deepLinkBack) return;
+    this.beginRequests();
+    this.deepLinkBack = null;
+    this.clearDetail();
+    this.restoreBeneathDeepLink();
+    this.clearLayer('detail');
   }
 
   handleAction(action: Action): void {
@@ -273,12 +416,25 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
 
   private onBack(): void {
     if (this.mode === 'detail') {
-      if (this.deepLinkBack) { const back = this.deepLinkBack; this.deepLinkBack = null; this.clearDetail(); back(); return; }
       this.clearDetail();
+      if (this.deepLinkBack) {
+        const back = this.deepLinkBack;
+        this.deepLinkBack = null;
+        this.restoreBeneathDeepLink();
+        this.clearLayer('detail');
+        back();
+        return;
+      }
       this.gridCategory ? this.renderGrid() : this.renderBrowse();
+      this.clearLayer('detail');
       return;
     }
-    if (this.mode === 'grid') { this.gridCategory = null; this.renderBrowse(); return; }
+    if (this.mode === 'grid') {
+      this.gridCategory = null;
+      this.renderBrowse();
+      this.clearLayer('grid');
+      return;
+    }
     this.handlers.onBack();
   }
 
@@ -314,9 +470,9 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   }
 
   private updateHero(name: string, poster: string): void {
-    const hero = this.container.querySelector<HTMLElement>('.catalog-hero');
+    const hero = this.layers.browse.querySelector<HTMLElement>('.catalog-hero');
     if (!hero) return;
-    const title = this.container.querySelector<HTMLElement>('.catalog-hero-title');
+    const title = this.layers.browse.querySelector<HTMLElement>('.catalog-hero-title');
     if (title) title.textContent = name; // textContent escapes untrusted names
     // Poster sits inside a CSS url('…') string; percent-encode the characters
     // that could break out of it (matches renderBrowse's heroBg).
@@ -364,8 +520,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const signal = this.requestSignal;
     if (!signal || signal.aborted) return;
     this.gridCategory = this.categories.find((c) => c.id === categoryId) ?? null;
+    const request = ++this.gridRequest;
+    this.clearLayer('grid');
     if (!this.itemsByCategory[categoryId]) {
-      this.renderLoading();
+      this.renderLoading('grid');
       try {
         this.itemsByCategory[categoryId] = await this.loadVisibleItems(
           account,
@@ -382,7 +540,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
         );
         this.itemsByCategory[categoryId] = [];
       }
-      if (signal.aborted || this.account?.id !== account.id) return;
+      // Back (or another category) may have superseded this grid meanwhile.
+      if (signal.aborted || this.account?.id !== account.id
+          || this.mode !== 'grid' || request !== this.gridRequest) return;
+      this.clearLayer('grid');
     }
     this.gridFocusIndex = 0;
     this.gridVirtualizer.setScrollOffset(0);
@@ -408,7 +569,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
 
   // Lock badges follow the unlock session without changing what is listed.
   refreshLocks(): void {
-    if (!this.container.querySelector('.catalog-view')) return;
+    if (!this.layer().querySelector('.catalog-view')) return;
     if (this.mode === 'browse') this.renderBrowse(false);
     else if (this.mode === 'grid') this.renderGrid(false);
   }
@@ -426,25 +587,33 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     `;
   }
 
-  protected rail(title: string, items: Safe[]): Safe {
+  protected rail(key: string, title: string, items: Safe[]): Safe {
     return html`
-      <div class="catalog-rail">
+      <div class="catalog-rail" data-key="rail:${key}" data-rail-key="${key}">
         <h2 class="catalog-rail-title">${title}</h2>
         <div class="catalog-rail-track">${items}</div>
       </div>
     `;
   }
 
-  private renderLoading(): void {
-    morph(this.container, html`
+  private loadingMarkup(): Safe {
+    return html`
       <div class="catalog-view catalog-loading" data-nav-container>
         <p class="catalog-hint">${t('common.loading')}</p>
       </div>
-    `);
+    `;
+  }
+
+  private renderLoading(mode: Mode): void {
+    this.showLayer(mode);
+    // Drop focus from the hidden layer so OK can't reselect it meanwhile.
+    this.nav.focus(null);
+    morph(this.layers[mode], this.loadingMarkup());
   }
 
   protected renderBrowse(restoreFocus = true): void {
-    this.mode = 'browse';
+    this.showLayer('browse');
+    const browse = this.layers.browse;
     this.resume = this.visibleResume(this.account!.id);
     const hero = this.railGroups[0]?.items[0] ?? this.heroFallback();
     const continueRail = this.continueRail();
@@ -459,14 +628,14 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const railCatIds: Record<string, true> = {};
     this.railGroups.forEach((r) => { railCatIds[r.category.id] = true; });
     const moreCats = this.categories.filter((c) => !railCatIds[c.id]);
-    const previousCategoryRail = this.container.querySelector<HTMLElement>('.catalog-category-rail');
+    const previousCategoryRail = browse.querySelector<HTMLElement>('.catalog-category-rail');
     if (restoreFocus && previousCategoryRail) {
       this.categoryVirtualizer.setScrollOffset(previousCategoryRail.scrollLeft);
     }
     const categoryViewport = previousCategoryRail?.clientWidth || CATEGORY_RAIL_VIEWPORT;
     const categoryRange = this.categoryVirtualizer.getRange(moreCats.length, categoryViewport);
 
-    morph(this.container, html`
+    morph(browse, html`
       <div class="catalog-view catalog-browse" data-nav-container>
         ${!hasContent
           ? html`<p class="catalog-hint catalog-empty">${this.emptyMessage}</p>`
@@ -483,9 +652,14 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
               <div class="catalog-rails-body">
                 ${continueRail}
                 ${watchlistRail}
-                ${this.railGroups.map((r) => this.rail(r.category.name, r.items.map((it) => this.tile(it))))}
+                ${this.railGroups.map((r) => this.rail(
+                  `cat:${r.category.id}`,
+                  r.category.name,
+                  r.items.map((it) => this.tile(it)),
+                ))}
                 ${moreCats.length ? html`
-                  <div class="catalog-rail">
+                  <div class="catalog-rail" data-key="rail:all-categories"
+                       data-rail-key="all-categories">
                     <h2 class="catalog-rail-title">${t('catalog.allCategories')}</h2>
                     <div class="catalog-rail-track catalog-category-rail">
                       <div class="catalog-category-rail-spacer"
@@ -514,7 +688,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
           `}
       </div>
     `);
-    const categoryRail = this.container.querySelector<HTMLElement>('.catalog-category-rail');
+    const categoryRail = browse.querySelector<HTMLElement>('.catalog-category-rail');
     if (categoryRail) {
       this.scrollGuard.syncOffset(
         categoryRail,
@@ -522,17 +696,18 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
         this.categoryVirtualizer.scrollOffset,
       );
     }
-    if (restoreFocus) this.nav.focusFirst();
+    if (restoreFocus) this.restoreBrowseFocus();
     else this.nav.clearDetachedFocus();
   }
 
   protected renderGrid(restoreFocus = true): void {
-    this.mode = 'grid';
+    this.showLayer('grid');
+    const gridLayer = this.layers.grid;
     const cat = this.gridCategory;
     const items = cat ? (this.itemsByCategory[cat.id] ?? []) : [];
     this.gridFocusIndex = Math.max(0, Math.min(this.gridFocusIndex, items.length - 1));
-    const previousView = this.container.querySelector<HTMLElement>('.catalog-grid');
-    const previousTrack = this.container.querySelector<HTMLElement>('.catalog-grid-track');
+    const previousView = gridLayer.querySelector<HTMLElement>('.catalog-grid');
+    const previousTrack = gridLayer.querySelector<HTMLElement>('.catalog-grid-track');
     if (restoreFocus && previousView) {
       this.gridVirtualizer.setScrollOffset(
         Math.max(0, previousView.scrollTop - this.gridTrackStart(previousView, previousTrack)),
@@ -544,7 +719,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
       this.gridVirtualizer.ensureVisible(this.gridFocusIndex, viewportWidth, viewportHeight);
     }
     const range = this.gridVirtualizer.getRange(items.length, viewportWidth, viewportHeight);
-    morph(this.container, html`
+    morph(gridLayer, html`
       <div class="catalog-view catalog-grid" data-nav-container>
         <h1 class="catalog-grid-title">${cat ? cat.name : this.kicker}</h1>
         ${items.length === 0
@@ -568,14 +743,14 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
           `}
       </div>
     `);
-    const view = this.container.querySelector<HTMLElement>('.catalog-grid');
-    const track = this.container.querySelector<HTMLElement>('.catalog-grid-track');
+    const view = gridLayer.querySelector<HTMLElement>('.catalog-grid');
+    const track = gridLayer.querySelector<HTMLElement>('.catalog-grid-track');
     const viewOffset = this.gridVirtualizer.scrollOffset === 0
       ? 0
       : this.gridVirtualizer.scrollOffset + this.gridTrackStart(view, track);
     if (view) this.scrollGuard.syncOffset(view, 'vertical', viewOffset);
     if (restoreFocus) {
-      const focused = this.container.querySelector<HTMLElement>(
+      const focused = gridLayer.querySelector<HTMLElement>(
         `[data-grid-index="${this.gridFocusIndex}"] [data-focusable]`,
       );
       this.nav.focus(focused);
@@ -586,8 +761,8 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const cat = this.gridCategory;
     const items = cat ? (this.itemsByCategory[cat.id] ?? []) : [];
     if (!items.length) return false;
-    const track = this.container.querySelector<HTMLElement>('.catalog-grid-track');
-    const view = this.container.querySelector<HTMLElement>('.catalog-grid');
+    const track = this.layers.grid.querySelector<HTMLElement>('.catalog-grid-track');
+    const view = this.layers.grid.querySelector<HTMLElement>('.catalog-grid');
     const viewportWidth = track?.clientWidth || CATALOG_GRID_VIEWPORT_WIDTH;
     const next = this.gridVirtualizer.getAdjacentIndex(
       this.gridFocusIndex,
@@ -609,7 +784,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const scrolled = this.gridVirtualizer.ensureVisible(next, viewportWidth, viewportHeight);
     if (!scrolled && this.gridVirtualizer.scrollOffset === offsetBefore
         && this.gridScrollFrame === null) {
-      const cell = this.container.querySelector<HTMLElement>(
+      const cell = this.layers.grid.querySelector<HTMLElement>(
         `[data-grid-index="${next}"] [data-focusable]`,
       );
       // Same window and same offset: renderGrid() would morph byte-identical
@@ -634,14 +809,14 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const current = parseInt(cell.dataset.categoryVirtualIndex!, 10);
     const next = current + (direction === 'left' ? -1 : 1);
     if (next < 0 || next >= categories.length) return false;
-    const rail = this.container.querySelector<HTMLElement>('.catalog-category-rail');
+    const rail = this.layers.browse.querySelector<HTMLElement>('.catalog-category-rail');
     this.categoryVirtualizer.ensureVisible(
       next,
       rail?.clientWidth || CATEGORY_RAIL_VIEWPORT,
     );
     this.renderBrowse(false);
     this.nav.focus(
-      this.container.querySelector<HTMLElement>(
+      this.layers.browse.querySelector<HTMLElement>(
         `[data-category-virtual-index="${next}"] [data-focusable]`,
       ),
     );
@@ -655,7 +830,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
       if (this.mode !== 'grid') return;
       const category = this.gridCategory;
       const items = category ? (this.itemsByCategory[category.id] ?? []) : [];
-      const track = this.container.querySelector<HTMLElement>('.catalog-grid-track');
+      const track = this.layers.grid.querySelector<HTMLElement>('.catalog-grid-track');
       const viewportWidth = track?.clientWidth || CATALOG_GRID_VIEWPORT_WIDTH;
       const viewportHeight = view.clientHeight || CATALOG_GRID_VIEWPORT_HEIGHT;
       const maxOffset = Math.max(
