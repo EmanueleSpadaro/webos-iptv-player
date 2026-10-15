@@ -34,7 +34,8 @@ Procedural workflows live in `.agents/skills/` (open Agent Skills format;
 - CSS: never put a modern selector (e.g. `:focus-within`) in the same rule
   as a legacy one — Chromium 53 drops the whole rule (stylelint
   `iptv/no-mixed-legacy-selector` enforces it). Every legacy fallback
-  sits under a top-level `@supports not (...)`; every polyfill is
+  sits under a top-level `@supports not (...)` or an `html.q-*` class
+  that `src/engine-quirks.ts` measures at boot; every polyfill is
   feature-detected.
 - Chromium 53 treats a `scrollIntoView` options object as `true`;
   `src/polyfills.ts` fixes it, so never bypass or reimplement that call.
@@ -164,6 +165,10 @@ build constant; `scripts/sync-version.mjs` runs on `npm version`.
   `[Tag]`-prefixed output. Prefer it over bare `console`.
 - **Comments** are sparse — a one-line `//` only for a non-obvious *why*. No
   JSDoc that restates a name. Match the surrounding file's density.
+- **American English** in new code, comments, tests, docs, and English UI
+  copy (`color`, `behavior`, `canceled`). A technical term keeps its
+  standard form: API, protocol, and spec names and existing identifiers
+  stay as written.
 
 ## webOS platform gotchas
 

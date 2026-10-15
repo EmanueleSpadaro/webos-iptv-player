@@ -8,12 +8,14 @@
  *
  * The build generates a margin fallback for every top-level flex container
  * with `gap` and writes it to the companion legacy-webos-base.css under
- * `@supports not (inset: 0)`. `inset` is a proxy for the targeted webOS
- * versions, not an exact flex-gap test: Chromium 84-86 would receive both gap
- * and margins, but no targeted webOS release uses that engine range.
- * Generating the margin rules keeps them synchronized with source `gap`
- * declarations; Grid and backdrop-filter fallbacks remain hand-written because
- * their layout and contrast behavior is context-specific.
+ * `html.q-no-flex-gap`, a class src/engine-quirks.ts sets after measuring flex
+ * gap (`@supports (gap: ...)` is true for grid gap alone). Generating the
+ * margin rules keeps them synchronized with source `gap` declarations; Grid
+ * and backdrop-filter fallbacks remain hand-written because their layout and
+ * contrast behavior is context-specific.
+ *
+ * Every rule here sits under a top-level `@supports not (...)` or is scoped
+ * to an `html.q-*` engine-quirk class.
  *
  * Load order carries meaning. This file is linked LAST because every rule in it
  * must beat component CSS. The generated margins are the opposite — defaults a
@@ -30,11 +32,42 @@
  * rule is both more specific and linked later — so on a gap-less engine it
  * replaces the gap instead of adding to it. Restate the sums.
  */
+html.q-no-flex-gap .tab-bar-inner > .tab-bar-account { margin-left: 52px; }
+html.q-no-flex-gap .epg-prog-title > .epg-bell-glyph { margin-left: 18px; }
+html.q-no-flex-gap .settings-field > .settings-item-hint { margin-top: 14px; }
+html.q-no-flex-gap .live-preview-favorite { margin-right: 20px; }
+
+/*
+ * The quirk class makes each generated margin more specific than the
+ * component rule that pushes a child to the end with `margin-left: auto`.
+ * Restate those so the push still wins.
+ */
+html.q-no-flex-gap .epg-page-info,
+html.q-no-flex-gap .live-category-account,
+html.q-no-flex-gap .live-category-row strong,
+html.q-no-flex-gap .live-preview-clock,
+html.q-no-flex-gap .parental-header .parental-account,
+html.q-no-flex-gap .parental-row strong,
+html.q-no-flex-gap .player-sidebar .sidebar-picker-arrow,
+html.q-no-flex-gap .player-menu .menu-item-value,
+html.q-no-flex-gap .tab-bar-search { margin-left: auto; }
+
+/*
+ * The All categories rail shares .catalog-rail-track but is a block, not a
+ * flex row: its generated scroll-end spacer would become an inline line box
+ * and overflow the rail's fixed height.
+ */
+html.q-scroll-end-padding .catalog-category-rail::after { content: none; }
+
+/*
+ * The loading view is on screen before app.js measures the quirks, so its
+ * generated gap margin cannot land on the first paint. `inset` arrived after
+ * flex gap and before webOS 22, so on every webOS TV it proxies exactly the
+ * engines without flex gap. Once measured, the quirk class takes over, so
+ * desktop Chromium 84-86 (flex gap, no `inset`) doubles it for a frame at most.
+ */
 @supports not (inset: 0) {
-  .tab-bar-inner > .tab-bar-account { margin-left: 52px; }
-  .epg-prog-title > .epg-bell-glyph { margin-left: 18px; }
-  .settings-field > .settings-item-hint { margin-top: 14px; }
-  .live-preview-favorite { margin-right: 20px; }
+  html:not(.quirks-measured) .loading-container > * + * { margin-top: 24px; }
 }
 
 @supports not (backdrop-filter: blur(1px)) {

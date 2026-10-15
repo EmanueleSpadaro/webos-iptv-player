@@ -1,4 +1,4 @@
-import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab } from './helpers';
+import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab, type Page } from './helpers';
 import { seedXtream } from './fixtures/xtream';
 
 // A minimal ASS body with one dialogue active from t=0, so assjs renders it as
@@ -75,10 +75,18 @@ async function seedMovies(
   });
 }
 
+// Chromium before 91 drops a flex scroller's end padding from its scroll
+// width. No engine Playwright drives has that quirk, so claim it the way
+// src/engine-quirks.ts would on such an engine.
+async function claimScrollEndQuirk(page: Page): Promise<void> {
+  await page.evaluate(() => document.documentElement.classList.add('q-scroll-end-padding'));
+}
+
 test('keeps the focus ring clear of the rail edge at See all', async ({ page }) => {
   await seedMovies(page, { streams: 30 });
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
+  await claimScrollEndQuirk(page);
   await enterTab(page, 'movies');
   await page.locator('.catalog-tile[data-item-id="100"]')
     .evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
@@ -91,9 +99,8 @@ test('keeps the focus ring clear of the rail edge at See all', async ({ page }) 
     const track = el.parentElement!.getBoundingClientRect();
     return Math.round(track.right - el.getBoundingClientRect().right);
   })).toBeGreaterThanOrEqual(11);
-  // Chromium before 91 drops a flex scroller's end padding from its scroll
-  // width, so the room past the last tile must come from content. Drop the
-  // padding here to measure what such an engine would scroll to.
+  // On such an engine the room past the last tile must come from content.
+  // Drop the padding here to measure what it would scroll to.
   expect(await seeAll.evaluate((el) => {
     const track = el.parentElement!;
     track.style.paddingRight = '0';
@@ -171,6 +178,7 @@ test('gives a scroll-end spacer only to flex containers', async ({ page }) => {
   await seedXtream(page, { catalog: 'large' });
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
+  await claimScrollEndQuirk(page);
   // Outside a flex container the spacer is an inline box with margins, which
   // Chromium 53 lays out as an extra line that overflows a fixed-height rail.
   const misplaced = () => page.evaluate(() => [...document.querySelectorAll<HTMLElement>('*')]

@@ -49,8 +49,9 @@ export default {
       {
         severity: 'error',
         ignore: [
-          // Flex gap gets a margin-based fallback generated at build time and
-          // written to legacy-webos-base.css (see esbuild.config.mjs).
+          // Flex gap gets a margin-based fallback generated at build time,
+          // keyed to html.q-no-flex-gap, and written to legacy-webos-base.css
+          // (see esbuild.config.mjs).
           'flexbox-gap',
           // legacy-webos-overrides.css supplies flex equivalents for every grid layout.
           'css-grid',

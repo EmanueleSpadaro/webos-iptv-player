@@ -1,4 +1,5 @@
 import './polyfills';
+import './engine-quirks';
 import { CONFIG } from './config';
 import { KeyHandler } from './navigation/key-handler';
 import { PlaylistService } from './services/playlist-service';

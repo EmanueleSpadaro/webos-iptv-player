@@ -12,7 +12,7 @@ import { type Channel } from '../src/types';
 // avoid collapsing — but nothing checked that they land in the same place.
 //
 // Both engines here are the same headless Chromium with the same fonts, so text
-// rasterises identically and every differing pixel is a layout difference. That
+// rasterizes identically and every differing pixel is a layout difference. That
 // makes this the one comparison that is trustworthy pixel-wise: the real TV
 // ships a wider font, which shifts glyphs on its own and drowns the signal.
 
@@ -126,7 +126,7 @@ async function prepareM3U(page: Page): Promise<void> {
     }]));
     localStorage.setItem('iptv_epg_url', JSON.stringify('http://epg.example.com/guide.xml'));
     localStorage.setItem('iptv_favorites', JSON.stringify(['one']));
-    // A half-watched past programme, so the EPG offers to resume it.
+    // A half-watched past program, so the EPG offers to resume it.
     const start = Date.now() - 2 * 3600_000;
     const end = start + 3600_000;
     localStorage.setItem('iptv_catchup_progress', JSON.stringify({
@@ -407,8 +407,8 @@ const M3U_SCREENS: Screen[] = [
     },
   },
   {
-    // A past programme only offers to resume when a checkpoint exists for it;
-    // prepareM3U seeds one. RIGHT enters the programme column on programme 0,
+    // A past program only offers to resume when a checkpoint exists for it;
+    // prepareM3U seeds one. RIGHT enters the program column on program 0,
     // which is the past show, and ENTER activates it.
     name: 'catchup-resume',
     budget: 0,
@@ -755,6 +755,47 @@ async function looseTextGaps(modern: Page, legacy: Page): Promise<string[]> {
   return measureLooseText(legacy, await findGappedLooseText(modern));
 }
 
+// The generated flex gap margins are scoped to `html.q-no-flex-gap`, which
+// makes each one more specific than the component rule it used to yield to —
+// a `margin-left: auto` push, most often. Unscope every quirk rule in place
+// and report each element whose margins differ from the scoped cascade.
+async function quirkScopeMarginShifts(page: Page): Promise<{ rewritten: number; shifts: string[] }> {
+  return page.evaluate(() => {
+    const QUIRK = 'html.q-no-flex-gap ';
+    const sheets = [...document.styleSheets].filter((sheet) => /legacy-webos-/.test(sheet.href || ''));
+    const elements = [...document.querySelectorAll<HTMLElement>('body *')];
+    const margins = () => elements.map((el) => {
+      const style = getComputedStyle(el);
+      return `${style.marginTop} ${style.marginRight} ${style.marginBottom} ${style.marginLeft}`;
+    });
+    const scoped = margins();
+    const swapped: [CSSStyleSheet, number, string][] = [];
+    for (const sheet of sheets) {
+      for (let i = 0; i < sheet.cssRules.length; i++) {
+        const rule = sheet.cssRules[i];
+        if (!(rule instanceof CSSStyleRule) || rule.selectorText.indexOf(QUIRK) < 0) continue;
+        swapped.push([sheet, i, rule.cssText]);
+        sheet.deleteRule(i);
+        sheet.insertRule(rule.cssText.split(QUIRK).join(''), i);
+      }
+    }
+    const unscoped = margins();
+    for (const [sheet, i, text] of swapped) {
+      sheet.deleteRule(i);
+      sheet.insertRule(text, i);
+    }
+    // An SVG element's className is an SVGAnimatedString, not its classes.
+    const name = (node: Element | null) => node?.getAttribute('class') || node?.tagName.toLowerCase();
+    const shifts: string[] = [];
+    elements.forEach((el, i) => {
+      if (scoped[i] !== unscoped[i]) {
+        shifts.push(`.${name(el)} in .${name(el.parentElement)}: ${scoped[i]} vs ${unscoped[i]}`);
+      }
+    });
+    return { rewritten: swapped.length, shifts };
+  });
+}
+
 async function walk(
   page: Page,
   browser: Browser,
@@ -772,6 +813,13 @@ async function walk(
     for (const screen of screens) {
       await screen.go(page);
       await screen.go(legacy.page);
+      const quirkScope = await quirkScopeMarginShifts(legacy.page);
+      // Zero means the legacy sheets went unmatched, not that nothing moved.
+      expect(quirkScope.rewritten, `${screen.name}: quirk rules unscoped`).toBeGreaterThan(0);
+      for (const shift of quirkScope.shifts) {
+        const entry = `${screen.name}: quirk scope moved ${shift}`;
+        if (failures.indexOf(entry) < 0) failures.push(entry);
+      }
       // A toast from an earlier screen fades on a schedule the two pages do
       // not share.
       if (screen.name !== 'watchlist-toast') {

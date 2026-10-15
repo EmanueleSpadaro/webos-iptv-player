@@ -5,7 +5,7 @@ description: Keep the app working on webOS 4's Chromium 53 — the compat gates,
 
 # Legacy engine (webOS 4 / Chromium 53)
 
-esbuild builds with `target: ['chrome53']`. Modern *syntax* is down-levelled;
+esbuild builds with `target: ['chrome53']`. Modern *syntax* is down-leveled;
 modern *APIs* are not, and they fail silently on a TV — often as a blank
 loading screen. **Don't change the target without reason.**
 
@@ -41,10 +41,13 @@ calls native.
 ## Legacy stylesheets — load order is the contract
 
 - `css/legacy-webos-base.css` is **auto-generated** by
-  `scripts/css-transforms.mjs` on every build: webOS 4/5/6 lack flex `gap`,
-  so it emits `> * + *` margins. Never hand-edit it; commit the regenerated
-  file. It is linked **first**, so a component rule of equal specificity (a
-  `margin: auto` in particular) still wins.
+  `scripts/css-transforms.mjs` on every build: `> * + *` margins for flex
+  `gap` (missing on webOS 4/5/6) under `html.q-no-flex-gap`, and scroll-end
+  spacers under `html.q-scroll-end-padding`. Never hand-edit it; commit the
+  regenerated file. It is linked **first**, but the quirk class makes each
+  rule more specific than a plain component rule, so a component rule that
+  must still win (a `margin-left: auto` push, a `::after` opt-out) is
+  restated under the same class in `legacy-webos-overrides.css`.
 - `css/legacy-webos-overrides.css` is hand-written and linked **last**,
   because its Grid and backdrop-filter fallbacks must beat component CSS.
 
@@ -65,17 +68,40 @@ supported selector (`:not(a, b)`, `of` in `:nth-child`, …) is mapped in
 `unclassifiedSelectorFeatures()` test fails until each new subfeature
 is classified there.
 
+## Engine quirks — measured, not proxied
+
+Some legacy behavior is not a feature, so `@supports` cannot test it:
+`@supports (gap: …)` is true for grid gap alone, and Chromium before 91
+leaves a row flex scroller's end padding out of its scroll width.
+`src/engine-quirks.ts`, imported right after `polyfills` in `src/app.ts`
+(not in the worker), measures each with a hidden probe at boot and sets a
+`q-*` class on `<html>` only where the quirk exists. Measure behavior;
+never parse the user agent. The simulation measures both: `q-no-flex-gap`
+for real, and `q-scroll-end-padding` because its init script under-reports
+`scrollWidth` on the `data-quirk-probe` scroller. On `chromium`, a test that
+needs the spacers adds `q-scroll-end-padding` itself. Neither quirk names a
+grid: a single-row grid's generated margins sit under
+`@supports not (display: grid)`, since Chromium 66–83 has grid gap without
+flex gap. `scripts/css-transforms.test.mjs` rejects any `html.q-*` class
+missing from `QUIRK_CLASSES`. The classes land when `app.js` runs, after
+the first paint, so the static loading view also keeps an
+`@supports not (inset: 0)` copy of its gap margin in the overrides.
+`e2e/legacy-layout-parity.spec.ts` unscopes
+every quirk rule in place and fails on any element whose margins move, which
+is how an out-specified component rule surfaces.
+
 ## Fallbacks must stay inert on a modern TV
 
 A leaked fallback double-applies on top of the real feature (an unguarded
 `:focus` ring once stacked a second glow inside a `:focus-within` one). So
 every rule in both legacy stylesheets sits under a top-level
-`@supports not (...)`, and every polyfill is feature-detected. Three checks
-pin this:
+`@supports not (...)` or is scoped to an `html.q-*` quirk class, and every
+polyfill is feature-detected. Three checks pin this:
 
 - `e2e/legacy-fallbacks.spec.ts`: on `chromium`, each legacy `@supports`
-  condition is false and each polyfilled API is still `[native code]`; on
-  `chromium-53-simulation`, the same APIs are ours.
+  condition is false, no `q-*` class is set, and each polyfilled API is
+  still `[native code]`; on `chromium-53-simulation`, the same APIs are
+  ours and both `q-*` classes are set.
 - `scripts/css-transforms.test.mjs`: catches an unguarded rule without a
   browser.
 - `scripts/polyfilled-apis.mjs`: the polyfill list, pinned by discovery. The

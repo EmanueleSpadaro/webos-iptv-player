@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import postcss from 'postcss';
 import { describe, expect, it } from 'vitest';
+import { QUIRK_CLASSES } from '../src/engine-quirks.ts';
 import {
   convertLegacyColorSyntax,
   generateFlexGapFallback,
@@ -15,8 +16,8 @@ describe('generateFlexGapFallback', () => {
       .row { display: flex; gap: 12px; }
       .column { display: flex; flex-direction: column; gap: 16px; }
     `]);
-    expect(out).toContain('.row > * + * { margin-left: 12px; }');
-    expect(out).toContain('.column > * + * { margin-top: 16px; }');
+    expect(out).toContain('html.q-no-flex-gap .row > * + * { margin-left: 12px; }');
+    expect(out).toContain('html.q-no-flex-gap .column > * + * { margin-top: 16px; }');
   });
 
   it('uses the directional gap for the flex main axis', () => {
@@ -26,10 +27,10 @@ describe('generateFlexGapFallback', () => {
       .row-shorthand { display: flex; gap: 10px 24px; }
       .column-shorthand { display: flex; flex-direction: column; gap: 12px 20px; }
     `]);
-    expect(out).toContain('.row > * + * { margin-left: 14px; }');
-    expect(out).toContain('.column > * + * { margin-top: 18px; }');
-    expect(out).toContain('.row-shorthand > * + * { margin-left: 24px; }');
-    expect(out).toContain('.column-shorthand > * + * { margin-top: 12px; }');
+    expect(out).toContain('html.q-no-flex-gap .row > * + * { margin-left: 14px; }');
+    expect(out).toContain('html.q-no-flex-gap .column > * + * { margin-top: 18px; }');
+    expect(out).toContain('html.q-no-flex-gap .row-shorthand > * + * { margin-left: 24px; }');
+    expect(out).toContain('html.q-no-flex-gap .column-shorthand > * + * { margin-top: 12px; }');
   });
 
   it('expands grouped selectors and ignores grid and nested rules', () => {
@@ -38,7 +39,7 @@ describe('generateFlexGapFallback', () => {
       .grid { display: grid; gap: 20px; }
       @media (min-width: 1px) { .nested { display: flex; gap: 30px; } }
     `]);
-    expect(out).toContain('.alpha > * + *, .bravo > * + * { margin-left: 10px; }');
+    expect(out).toContain('html.q-no-flex-gap .alpha > * + *, html.q-no-flex-gap .bravo > * + * { margin-left: 10px; }');
     expect(out).not.toContain('.grid >');
     expect(out).not.toContain('.nested >');
   });
@@ -48,7 +49,7 @@ describe('generateFlexGapFallback', () => {
       .badge { display: inline-flex; align-items: center; }
       .badge { gap: 5px; }
     `]);
-    expect(out).toContain('.badge > * + * { margin-left: 5px; }');
+    expect(out).toContain('html.q-no-flex-gap .badge > * + * { margin-left: 5px; }');
   });
 
   it('resolves the flex context from the selector it narrows', () => {
@@ -64,7 +65,7 @@ describe('generateFlexGapFallback', () => {
       .tabs { display: flex; gap: 4px; }
       .scoped-tabs { gap: 2px; }
     `]);
-    expect(out).toContain('.scoped-tabs > * + * { margin-left: 2px; }');
+    expect(out).toContain('html.q-no-flex-gap .scoped-tabs > * + * { margin-left: 2px; }');
   });
 
   it('zeroes the other axis when a rule flips direction over a base container', () => {
@@ -72,8 +73,8 @@ describe('generateFlexGapFallback', () => {
       .card { display: flex; flex-direction: column; gap: 16px; }
       .card-wide { flex-direction: row; gap: 24px; }
     `]);
-    expect(out).toContain('.card > * + * { margin-top: 16px; }');
-    expect(out).toContain('.card-wide > * + * { margin-left: 24px; margin-top: 0; }');
+    expect(out).toContain('html.q-no-flex-gap .card > * + * { margin-top: 16px; }');
+    expect(out).toContain('html.q-no-flex-gap .card-wide > * + * { margin-left: 24px; margin-top: 0; }');
   });
 
   it('keeps a gap reset so it can override an inherited fallback margin', () => {
@@ -81,7 +82,20 @@ describe('generateFlexGapFallback', () => {
       .action { display: flex; gap: 8px; }
       .action[data-variant="bare"] { gap: 0; }
     `]);
-    expect(out).toContain('.action[data-variant="bare"] > * + * { margin-left: 0; }');
+    expect(out).toContain('html.q-no-flex-gap .action[data-variant="bare"] > * + * { margin-left: 0; }');
+  });
+
+  it('keeps a single-row grid\'s margins off engines with grid gap', () => {
+    const out = generateFlexGapFallback([`
+      .controls { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; }
+    `]);
+    expect(out).toContain('@supports not (display: grid) {\n  html.q-no-flex-gap .controls > * + * { margin-left: 14px; }\n}');
+    const root = postcss.parse(out);
+    const unguarded = [];
+    root.walkRules((rule) => {
+      if (rule.parent.type === 'root' && rule.selector.includes('.controls')) unguarded.push(rule.selector);
+    });
+    expect(unguarded).toEqual([]);
   });
 
   it('excludes a grid container that declares display in a separate rule', () => {
@@ -109,10 +123,10 @@ describe('generateScrollEndSpacers', () => {
       .rail { display: flex; gap: 20px; overflow-x: auto; padding: 12px 12px 20px; }
     `]);
     expect(modern).toEqual([
-      ".rail::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: -9px; margin-right: -12px; }",
+      "html.q-scroll-end-padding .rail::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: -9px; margin-right: -12px; }",
     ]);
     // No gap precedes the spacer where the gap is a sibling margin.
-    expect(legacy).toEqual(['  .rail::after { margin-left: 11px; }']);
+    expect(legacy).toEqual(['html.q-no-flex-gap .rail::after { margin-left: 11px; }']);
   });
 
 
@@ -122,7 +136,7 @@ describe('generateScrollEndSpacers', () => {
       .tabs { overflow: auto hidden; }
     `]);
     expect(modern).toEqual([
-      ".tabs::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: calc(var(--pad) - 1px); margin-right: calc(0px - var(--pad)); }",
+      "html.q-scroll-end-padding .tabs::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: calc(var(--pad) - 1px); margin-right: calc(0px - var(--pad)); }",
     ]);
     expect(legacy).toEqual([]);
   });
@@ -151,13 +165,13 @@ describe('generateScrollEndSpacers', () => {
       .wide .tab { padding: 30px; }
     `]);
     expect(modern).toEqual([
-      ".tabs::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: 3px; margin-right: -8px; }",
-      ".tabs.wide::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: 7px; margin-right: -12px; }",
-      '.tabs.flush::after { content: none; }',
+      "html.q-scroll-end-padding .tabs::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: 3px; margin-right: -8px; }",
+      "html.q-scroll-end-padding .tabs.wide::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: 7px; margin-right: -12px; }",
+      'html.q-scroll-end-padding .tabs.flush::after { content: none; }',
     ]);
     expect(legacy).toEqual([
-      '  .tabs::after { margin-left: 7px; }',
-      '  .tabs.wide::after { margin-left: 11px; }',
+      'html.q-no-flex-gap .tabs::after { margin-left: 7px; }',
+      'html.q-no-flex-gap .tabs.wide::after { margin-left: 11px; }',
     ]);
   });
 
@@ -170,33 +184,57 @@ describe('generateScrollEndSpacers', () => {
 });
 
 describe('legacy stylesheets', () => {
-  // A fallback that is not wrapped in an `@supports not (...)` guard also lands
-  // on a modern TV, where it double-applies on top of the real feature. e2e
-  // proves this in a browser; here it fails without one.
-  // Scroll-end spacers are the exception: webOS 22 (Chromium 87) passes the
-  // guard but still drops end padding from the scroll width.
-  const cssDir = new URL('../css/', import.meta.url);
-  const spacers = generateScrollEndSpacers(
-    linkedStylesheets(
-      readFileSync(new URL('../index.html', import.meta.url), 'utf8'),
-      readdirSync(cssDir),
-      'legacy-webos-base.css',
-    ).map((file) => readFileSync(new URL(file, cssDir), 'utf8')),
-  ).modern.map((rule) => rule.slice(0, rule.indexOf(' {')));
+  // A fallback that is not wrapped in an `@supports not (...)` guard or scoped
+  // to a measured `html.q-*` engine quirk also lands on a modern TV, where it
+  // double-applies on top of the real feature. e2e proves this in a browser;
+  // here it fails without one.
+  const QUIRK_SCOPED = /^html((?:\.q-[\w-]+)+)\s/;
+  const KNOWN_QUIRKS = Object.values(QUIRK_CLASSES);
+  const unknownQuirks = (selector) => {
+    const match = QUIRK_SCOPED.exec(selector);
+    return match ? match[1].slice(1).split('.').filter((name) => KNOWN_QUIRKS.indexOf(name) === -1) : [];
+  };
   for (const file of ['legacy-webos-base.css', 'legacy-webos-overrides.css']) {
-    it(`wraps every rule in css/${file} in an @supports guard`, () => {
+    it(`guards every rule in css/${file} with @supports or a quirk class`, () => {
       const css = readFileSync(new URL(`../css/${file}`, import.meta.url), 'utf8');
       const unguarded = [];
       postcss.parse(css).each((node) => {
         if (node.type === 'comment') return;
-        if (file === 'legacy-webos-base.css' && node.type === 'rule'
-            && spacers.indexOf(node.selector) >= 0) return;
+        if (node.type === 'rule'
+            && node.selectors.every((selector) => QUIRK_SCOPED.test(selector)
+              && !unknownQuirks(selector).length)) return;
         if (node.type === 'atrule' && node.name === 'supports' && node.params.startsWith('not ')) return;
         unguarded.push(node.type === 'rule' ? node.selector : `@${node.name} ${node.params}`);
       });
       expect(unguarded).toEqual([]);
     });
   }
+
+  it('names only quirks src/engine-quirks.ts measures', () => {
+    const unknown = [];
+    for (const file of ['legacy-webos-base.css', 'legacy-webos-overrides.css']) {
+      const css = readFileSync(new URL(`../css/${file}`, import.meta.url), 'utf8');
+      postcss.parse(css).walkRules((rule) => {
+        for (const selector of rule.selectors) unknown.push(...unknownQuirks(selector));
+      });
+    }
+    expect(unknown).toEqual([]);
+  });
+
+  it('keys every flex gap fallback and scroll-end spacer to its quirk', () => {
+    const css = readFileSync(new URL('../css/legacy-webos-base.css', import.meta.url), 'utf8');
+    const misplaced = [];
+    postcss.parse(css).walkRules((rule) => {
+      // A spacer carries `content`; a rule without it only offsets one for
+      // engines whose gap is a sibling margin.
+      const spacer = rule.some((decl) => decl.prop === 'content');
+      for (const selector of rule.selectors) {
+        const quirk = spacer ? 'q-scroll-end-padding' : 'q-no-flex-gap';
+        if (!new RegExp(`^html\\.[\\w.-]*\\b${quirk}\\b`).test(selector)) misplaced.push(selector);
+      }
+    });
+    expect(misplaced).toEqual([]);
+  });
 });
 
 describe('scaleFontSizes', () => {

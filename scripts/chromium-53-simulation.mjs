@@ -160,6 +160,24 @@ export function removeApis({ globals, members, cssProperties }) {
     drop(owner.prototype, member);
     drop(owner, member);
   }
+
+  // Chromium before 91 leaves a row flex scroller's padding-right out of its
+  // scroll width. The layout itself cannot be simulated, so only the probe
+  // src/engine-quirks.ts marks sees it, and the spacer CSS keyed to that
+  // quirk still renders here.
+  const scrollWidth = typeof Element !== 'undefined'
+    && Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth');
+  if (scrollWidth && scrollWidth.get) {
+    const measure = scrollWidth.get;
+    Object.defineProperty(Element.prototype, 'scrollWidth', {
+      configurable: true,
+      get() {
+        const width = measure.call(this);
+        if (this.getAttribute('data-quirk-probe') !== 'scroll-end-padding') return width;
+        return width - (parseFloat(getComputedStyle(this).paddingRight) || 0);
+      },
+    });
+  }
 }
 
 // The CSS axis: approximate how Chromium 53 parses a stylesheet, so the e2e

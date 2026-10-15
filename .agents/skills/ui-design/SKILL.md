@@ -271,7 +271,7 @@ Load the **`legacy-engine`** skill before editing CSS layout. In short:
 no flex `gap` on webOS 4–6 (the build generates margins), no Grid on
 webOS 4 (fallbacks in `css/legacy-webos-overrides.css`), never mix a
 modern selector with a legacy one in a rule, and put every fallback under a
-top-level `@supports not (...)`. Icons are **inline SVG** with
+top-level `@supports not (...)` or an `html.q-*` engine-quirk class. Icons are **inline SVG** with
 `currentColor` — uncommon Unicode symbols render as blank boxes on the TV
 font.
 

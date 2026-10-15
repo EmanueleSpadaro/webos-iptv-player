@@ -94,34 +94,80 @@ test('a modern engine activates none of the legacy CSS fallbacks', async ({ page
     const legacy = [...document.styleSheets]
       .filter((sheet) => /legacy-webos-/.test(sheet.href || ''));
     const conditions: { condition: string; active: boolean }[] = [];
-    let unguarded = 0;
-    let spacers = 0;
+    const unguarded: string[] = [];
+    let quirkScoped = 0;
     for (const sheet of legacy) {
       for (const rule of [...(sheet.cssRules || [])]) {
-        // Scroll-end spacers apply on every engine: webOS 22 (Chromium 87)
-        // passes the guards but still drops end padding from scroll width.
-        if (rule instanceof CSSStyleRule && /legacy-webos-base/.test(sheet.href || '')
-            && /::after$/.test(rule.selectorText)
-            && (rule.style.flexBasis === '1px' || rule.style.content === 'none')) {
-          spacers++;
-          continue;
-        }
         if (rule instanceof CSSSupportsRule) {
           conditions.push({ condition: rule.conditionText, active: CSS.supports(rule.conditionText) });
+        } else if (rule instanceof CSSStyleRule) {
+          // Rules for behavior @supports cannot test key off a measured quirk.
+          if (rule.selectorText.split(',').every((part) => /^html(\.q-[\w-]+)+\s/.test(part.trim()))) {
+            quirkScoped++;
+          } else {
+            unguarded.push(rule.selectorText);
+          }
         } else if (!(rule instanceof CSSMediaRule) && rule.constructor.name !== 'CSSComment') {
-          unguarded++;
+          unguarded.push(rule.cssText);
         }
       }
     }
-    return { sheets: legacy.length, conditions, unguarded, spacers };
+    const quirks = [...document.documentElement.classList].filter((name) => /^q-/.test(name));
+    return { sheets: legacy.length, conditions, unguarded, quirkScoped, quirks };
   });
 
   // Both legacy stylesheets must be loaded, or the test would pass vacuously.
   expect(guards.sheets).toBe(2);
   expect(guards.conditions.length).toBeGreaterThan(0);
-  expect(guards.unguarded, 'legacy rules outside an @supports guard').toBe(0);
-  expect(guards.spacers).toBeGreaterThan(0);
+  expect(guards.unguarded, 'legacy rules outside an @supports guard or quirk class').toEqual([]);
+  expect(guards.quirkScoped).toBeGreaterThan(0);
+  expect(guards.quirks, 'engine quirks measured on a modern engine').toEqual([]);
   for (const guard of guards.conditions) expect(guard.active, guard.condition).toBe(false);
+});
+
+test('the simulated engine measures both engine quirks', async ({ page }) => {
+  test.skip(!isChromium53(), 'only the simulation lacks flex gap');
+  await routePlaylist(page);
+  await seedPlaylist(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  expect(await page.evaluate(() => [...document.documentElement.classList]
+    .filter((name) => /^q-/.test(name)).sort())).toEqual(['q-no-flex-gap', 'q-scroll-end-padding']);
+});
+
+test('the loading view keeps its spacing before the quirks are measured', async ({ page }) => {
+  // The paint before app.js runs: no script, so no q-* class yet.
+  await page.route('**/js/app.js', (route) => route.abort());
+  await page.goto('/');
+  // Layout offsets, since the spinning spinner's bounding box grows. A
+  // string, because without app.js the simulation lacks the polyfills
+  // Playwright needs to return an object.
+  const spacing = JSON.parse(await page.evaluate(() => {
+    const spinner = document.querySelector<HTMLElement>('.loading-spinner')!;
+    const text = document.querySelector<HTMLElement>('.loading-text')!;
+    return JSON.stringify({
+      quirks: document.documentElement.className,
+      gap: text.offsetTop - spinner.offsetTop - spinner.offsetHeight,
+    });
+  }));
+  expect(spacing).toEqual({ quirks: '', gap: 24 });
+});
+
+test('the loading view stopgap steps aside once the quirks are measured', async ({ page }) => {
+  test.skip(!isChromium53(), 'only the simulation activates the stopgap');
+  await routePlaylist(page);
+  await seedPlaylist(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  // Without the quirk class only the stopgap could space the loading view,
+  // as it would on an engine with flex gap but no `inset`.
+  const margins = await page.evaluate(() => {
+    const text = document.querySelector('.loading-text')!;
+    const before = getComputedStyle(text).marginTop;
+    document.documentElement.classList.remove('q-no-flex-gap');
+    return [before, getComputedStyle(text).marginTop];
+  });
+  expect(margins).toEqual(['24px', '0px']);
 });
 
 // addInitScript reaches page realms only, so the worker is degraded by a
@@ -208,7 +254,7 @@ test('no flex-gap container separates an element from loose text', async ({ page
       channelKey: (h >>> 0).toString(16).padStart(8, '0'), channelName: 'Channel 1',
       title: 'Later Show', startMs: Date.now() + 7200_000, stopMs: Date.now() + 10800_000,
     }]));
-    // Favourites management only offers its hint bar on a non-empty group.
+    // Favorites management only offers its hint bar on a non-empty group.
     localStorage.setItem('iptv_favorites',
       JSON.stringify([(h >>> 0).toString(16).padStart(8, '0')]));
   });
@@ -242,8 +288,8 @@ test('no flex-gap container separates an element from loose text', async ({ page
   await collect();
   await page.keyboard.press('Escape');
 
-  // Favourites management is a second editor mode with a hint bar of its own,
-  // and it renders only while the Favourites group is active and non-empty.
+  // Favorites management is a second editor mode with a hint bar of its own,
+  // and it renders only while the Favorites group is active and non-empty.
   await page.locator('[data-group="builtin:favorites"]').click();
   await page.locator('[data-favorite-manage]').click();
   await expect(page.locator('.edit-hints.favorite-hints')).toBeVisible();
