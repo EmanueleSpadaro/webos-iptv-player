@@ -220,9 +220,14 @@ performance setting, not a no-animation preference.
 
 - Gate only animations with a measured cost: smooth scrolling (opt-in
   under `full`), layout-driven transitions (width, padding, `max-height`,
-  scrollbar position). Cheap status loops — live pulse, playing pulse,
-  marquee, spinner — stay in every mode, and also honor
-  `prefers-reduced-motion`.
+  scrollbar position), focus transitions on long lists (channel rows,
+  sidebar channel rows), the recent-searches fade (a full-screen scrim),
+  and the playing pulse — on the webOS 4 emulator even one small
+  infinite loop keeps the compositor drawing every frame.
+  Other status loops — live pulse, marquee, spinner — stay in every
+  mode until measured. Don't use
+  `prefers-reduced-motion`: webOS never reports it, so the animation
+  mode is the only motion control.
 - Motion answers the user — focus feedback, a panel opening, a confirmed
   action — and shows what changed. No decorative entrance animations.
 - **Close mirrors open**: same transition and path in reverse, from every

@@ -188,11 +188,8 @@ test.describe('EPG live badge', () => {
     expect(styles.focused.border).not.toBe(styles.idle.border);
   });
 
-  test('with reduced motion the LIVE badge still shows, but the pulse is disabled', async ({ page }) => {
-    // The shared badge styles disable the dot animation under reduced motion.
-    // Modern engines honor it (legacy webOS ignores it and keeps pulsing —
-    // both acceptable). Verify the off-switch on an engine that honors it.
-    test.skip(isChromium53(), 'legacy webOS ignores reduced motion and lacks getAnimations');
+  test('the LIVE badge keeps pulsing when the OS prefers reduced motion', async ({ page }) => {
+    // webOS never reports the OS preference; only the animation mode gates motion.
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await setup(page);
     await page.goto('/');
@@ -202,12 +199,9 @@ test.describe('EPG live badge', () => {
     await expect(page.locator('#view-epg')).toBeVisible();
     await page.locator('#epg-programmes .epg-programme-item.state-live').first().waitFor();
 
-    // Accessibility: the badge/dot still render (the LIVE indicator stays)...
     const dot = page.locator('#epg-programmes .epg-programme-item.state-live .live-badge-dot');
     await expect(dot).toHaveCount(1);
-    // ...but the pulse is turned off entirely — no animation name, no running animation.
-    await expect(dot).toHaveCSS('animation-name', 'none');
-    expect(await dot.evaluate((el) => el.getAnimations().length)).toBe(0);
+    await expect(dot).toHaveCSS('animation-name', 'liveBadgeDotPulse');
   });
 });
 

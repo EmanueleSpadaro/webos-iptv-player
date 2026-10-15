@@ -232,7 +232,10 @@ test.describe('Settings navigation', () => {
       document.body.appendChild(liveBadge);
       const motionFixtures = document.createElement('div');
       motionFixtures.innerHTML = `
+        <div class="channel-item"></div>
         <span class="playing-indicator"></span>
+        <div class="search-history-scrim"></div>
+        <div class="search-history-panel"></div>
         <div class="epg-programme-item state-live"></div>
         <div class="player-sidebar visible channels-only">
           <div class="sidebar-picker-arrow"><svg></svg></div>
@@ -248,9 +251,19 @@ test.describe('Settings navigation', () => {
           .transitionDuration),
         search: seconds(getComputedStyle(document.querySelector('.tab-bar-search-input')!)
           .transitionDuration),
+        channelRow: seconds(getComputedStyle(motionFixtures.querySelector('.channel-item')!)
+          .transitionDuration),
+        sidebarRow: seconds(getComputedStyle(motionFixtures.querySelector('.sidebar-ch-item')!)
+          .transitionDuration),
         liveBadge: getComputedStyle(liveBadge).animationName,
         playingIndicator: getComputedStyle(
           motionFixtures.querySelector('.playing-indicator')!,
+        ).animationName,
+        historyScrim: getComputedStyle(
+          motionFixtures.querySelector('.search-history-scrim')!,
+        ).animationName,
+        historyPanel: getComputedStyle(
+          motionFixtures.querySelector('.search-history-panel')!,
         ).animationName,
         epgLiveRail: getComputedStyle(
           motionFixtures.querySelector('.epg-programme-item')!,
@@ -274,8 +287,12 @@ test.describe('Settings navigation', () => {
     });
     expect(durations.search.every(value => value <= 0.000001)).toBe(true);
     expect(durations.button.some(value => value >= 0.1)).toBe(true);
+    expect(durations.channelRow.every(value => value <= 0.000001)).toBe(true);
+    expect(durations.sidebarRow.every(value => value <= 0.000001)).toBe(true);
     expect(durations.liveBadge).toBe('liveBadgeDotPulse');
-    expect(durations.playingIndicator).toBe('pulse');
+    expect(durations.playingIndicator).toBe('none');
+    expect(durations.historyScrim).toBe('none');
+    expect(durations.historyPanel).toBe('none');
     expect(durations.epgLiveRail).toBe('epgRailPulse');
     expect(durations.groupPicker).toBe('group-picker-nudge');
     expect(durations.channelMarquee).toBe('marquee-bounce');
@@ -284,6 +301,37 @@ test.describe('Settings navigation', () => {
 
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-animation', 'essential');
+  });
+
+  test('Reduced mode keeps list focus, the playing pulse, and the history fade', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('html')).toHaveAttribute('data-animation', 'reduced');
+    const motion = await page.evaluate(() => {
+      const fixtures = document.createElement('div');
+      fixtures.innerHTML = `
+        <div class="channel-item"></div>
+        <span class="playing-indicator"></span>
+        <div class="search-history-scrim"></div>
+        <div class="search-history-panel"></div>
+        <div class="player-sidebar"><div class="sidebar-ch-item"></div></div>
+      `;
+      document.body.appendChild(fixtures);
+      const style = (selector: string) => getComputedStyle(fixtures.querySelector(selector)!);
+      const result = {
+        channelRow: style('.channel-item').transitionDuration,
+        sidebarRow: style('.sidebar-ch-item').transitionDuration,
+        playingIndicator: style('.playing-indicator').animationName,
+        historyScrim: style('.search-history-scrim').animationName,
+        historyPanel: style('.search-history-panel').animationName,
+      };
+      fixtures.remove();
+      return result;
+    });
+    expect(motion.channelRow).toBe('0.2s');
+    expect(motion.sidebarRow).toBe('0.2s');
+    expect(motion.playingIndicator).toBe('pulse');
+    expect(motion.historyScrim).toBe('search-history-in');
+    expect(motion.historyPanel).toBe('search-history-in');
   });
 
   test('data-animation CSS owns the navigation scroll policy', async ({ page }) => {

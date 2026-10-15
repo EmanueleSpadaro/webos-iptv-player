@@ -686,10 +686,6 @@
   transition: max-height var(--transition);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .epg-mapping-list { transition: none; }
-}
-
 .epg-mapping-spacer {
   position: relative;
 }

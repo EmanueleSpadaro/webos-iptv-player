@@ -66,8 +66,6 @@ export default {
           // Focused classes cover remote navigation; the legacy stylesheet adds
           // a direct input-focus fallback for the remaining pointer-only field.
           'css-focus-within',
-          // Chromium 53 ignores the query, so animations simply always run.
-          'prefers-reduced-motion',
           // Degrades gracefully: every backdrop-filter has a >=75% opaque background
           // fallback, so panels lose only the frosted blur, not legibility.
           'css-backdrop-filter',

@@ -848,8 +848,10 @@ test.describe('display timezone', () => {
   });
 });
 
-test('reduced motion preserves geometry and continuity', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
+test('essential animation mode preserves geometry and continuity', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('iptv_animation_mode', JSON.stringify('essential'));
+  });
   await setup(page, { enabled: true });
   await selectFirst(page);
   await expectPreviewGeometry(page);

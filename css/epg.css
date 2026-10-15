@@ -657,10 +657,6 @@
   50% { opacity: 1; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .epg-programme-item.state-live::before { animation: none; }
-}
-
 /* Catch-up resume/watched badges and progress bar */
 .epg-catchup-badge {
   display: inline-block;

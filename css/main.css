@@ -86,10 +86,6 @@
   50% { opacity: 0.25; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .live-badge-dot { animation: none; }
-}
-
 /* App-wide font size. The ids are percentages (see TEXT_SIZES in
    src/config/themes.ts); 100 uses the default multiplier above. */
 [data-text-size="80"] { --font-scale: 0.8; }
@@ -112,6 +108,23 @@ html[data-animation="essential"] .epg-mapping-list,
 html[data-animation="essential"] .channel-health-progress-fill,
 html[data-animation="essential"] .osd-progress-bar {
   transition-duration: 0.001ms !important;
+}
+
+/* Measured on the webOS 4 emulator: list focus transitions roughly halve
+   main-thread and raster time when disabled outright. */
+html[data-animation="essential"] .channel-item,
+html[data-animation="essential"] .player-sidebar .sidebar-ch-item {
+  transition: none !important;
+}
+
+html[data-animation="essential"] .playing-indicator {
+  animation: none;
+}
+
+/* The full-screen scrim's fade drops frames on the webOS 4 emulator. */
+html[data-animation="essential"] .search-history-scrim,
+html[data-animation="essential"] .search-history-panel {
+  animation: none;
 }
 
 html[data-animation="full"] .playlist-tabs,
