@@ -144,9 +144,20 @@ async function prepareM3U(page: Page): Promise<void> {
 
 async function prepareXtream(page: Page): Promise<void> {
   await page.clock.setFixedTime(NOW);
-  await seedXtream(page);
+  await seedXtream(page, { catalog: 'large' });
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
+}
+
+// Wait out a smooth scroll so both engines are sampled at rest.
+async function railAtRest(p: Page, selector: string): Promise<void> {
+  let last = '';
+  await expect.poll(async () => {
+    const now = await p.locator(selector).evaluate((el) => `${String(el.scrollLeft)},${String(el.scrollTop)}`);
+    const settled = now === last;
+    last = now;
+    return settled;
+  }, { intervals: [100] }).toBe(true);
 }
 
 interface Screen {
@@ -543,6 +554,33 @@ const XTREAM_SCREENS: Screen[] = [
     go: async (p) => {
       await enterTab(p, 'movies');
       await expect(p.locator('#view-movies .catalog-tile[data-item-id="10"]').first()).toBeVisible();
+    },
+  },
+  {
+    // The rail's last tile, focused from the D-pad: its ring and the end
+    // gutter beside it.
+    name: 'movies-see-all',
+    budget: 0,
+    go: async (p) => {
+      await enterTab(p, 'movies');
+      const first = p.locator('#view-movies [data-rail-key="cat:1"] .catalog-tile').first();
+      await expect(first).toBeVisible();
+      await first.evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+      for (let i = 0; i < 20; i++) await p.keyboard.press('ArrowRight');
+      await expect(p.locator('#view-movies .catalog-see-all[data-category-id="1"]')).toHaveClass(/focused/);
+      await railAtRest(p, '#view-movies [data-rail-key="cat:1"] .catalog-rail-track');
+    },
+  },
+  {
+    name: 'movies-all-categories',
+    budget: 0,
+    go: async (p) => {
+      const cat = p.locator('#view-movies .catalog-cat[data-category-id="1"]');
+      await cat.evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+      await p.keyboard.press('ArrowRight');
+      await expect(p.locator('#view-movies .catalog-cat[data-category-id="2"]')).toHaveClass(/focused/);
+      await railAtRest(p, '#view-movies .catalog-rails');
+      await railAtRest(p, '#view-movies .catalog-category-rail');
     },
   },
   {

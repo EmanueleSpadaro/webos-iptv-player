@@ -76,6 +76,9 @@
 .catalog-rail-title { margin: 0 0 12px; font-size: 30px; font-weight: 600; color: var(--text-primary); }
 .catalog-rail-track { display: flex; gap: 20px; overflow-x: auto; padding: 12px 12px 20px; margin: 0 -12px; }
 .catalog-category-rail { height: 152px; display: block; overflow-anchor: none; }
+/* Block, not flex: the generated scroll-end spacer would become an inline line
+   box here and overflow the fixed height on Chromium 53. */
+.catalog-category-rail::after { content: none; }
 .catalog-category-rail-spacer { position: relative; height: 120px; }
 .catalog-category-rail-cell {
   position: absolute;
@@ -110,6 +113,14 @@
   outline-offset: 2px;
   box-shadow: 0 0 0 6px rgb(var(--catalog-focus-rgb) / 0.25), 0 10px 24px rgba(0, 0, 0, 0.6);
 }
+
+.catalog-see-all-card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 0 16px; box-sizing: border-box; text-align: center; color: var(--text-primary);
+}
+.catalog-see-all-icon { width: 56px; height: 56px; color: var(--text-secondary); }
+.catalog-see-all-label { margin-top: 16px; font-size: 26px; }
+.catalog-see-all-count { margin-top: 4px; font-size: 20px; color: var(--text-secondary); }
 
 .catalog-cat {
   width: 300px; height: 120px; flex: 0 0 auto;

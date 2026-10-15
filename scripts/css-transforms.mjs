@@ -1,6 +1,8 @@
 // Build-time CSS transforms consumed by esbuild.config.mjs.
 //
 // - Flex gap: generate sibling margins for webOS versions without flex gap.
+// - Scroll end padding: give horizontal flex scrollers a real end spacer for
+//   engines that leave the end padding out of the scroll width.
 // - Font scale: wrap pixel font sizes in the app-wide --font-scale variable.
 // - Legacy colors: convert modern rgb(var(...) / alpha) syntax for Chrome 53.
 import postcss from 'postcss';
@@ -91,6 +93,107 @@ export function linkedStylesheets(indexHtml, cssDirFiles, generated) {
   return linked;
 }
 
+const SCROLLING_RE = /^(auto|scroll)$/;
+const ZERO_LENGTH_RE = /^0(px|r?em|%)?$/;
+const SPACER_PROP_RE = /^(display|flex-direction|flex-wrap|justify-content|overflow(-x)?|padding(-right|-inline-end)?|gap|column-gap)$/;
+
+function boxSide(shorthand, index) {
+  const values = postcss.list.space(shorthand || '');
+  if (!values.length) return '';
+  if (index === 2) return values[2] || values[0];
+  return values[index] || values[0];
+}
+
+// `a - b - c` as px when every term is px, else a calc() the engine resolves.
+function subtract(first, ...rest) {
+  const terms = [first, ...rest];
+  if (terms.every((term) => /^-?\d*\.?\d+px$/.test(term))) {
+    const value = terms.slice(1).reduce((sum, term) => sum - parseFloat(term), parseFloat(first));
+    return `${String(Math.round(value * 100) / 100)}px`;
+  }
+  return `calc(${terms.join(' - ')})`;
+}
+
+// Chromium before 91 leaves a row flex scroller's padding-right out of its
+// scroll width, so the last item scrolls flush to the edge. (Its block-end
+// padding does count: a column scroller needs nothing, as the webOS 4 emulator
+// shows.) A 1px ::after placed `padding` past the last item rebuilds that room
+// from content on every engine; engines that do count the padding only scroll
+// that much further. It is 1px on both axes because a zero-area box adds no
+// scrollable overflow there. A trailing margin of -padding nets the spacer to
+// zero outer size, so a container that does not overflow keeps its size.
+// Without flex gap (the legacy layer) no gap precedes the spacer, so its
+// offset grows by the gap. Wrapping or justified containers would lay the
+// spacer out as a real item, so they are left alone.
+export function generateScrollEndSpacers(stylesheets) {
+  const declared = new Map();
+  const pseudoAfter = new Set();
+  for (const css of stylesheets) {
+    postcss.parse(css).walkRules((rule) => {
+      if (rule.parent.type !== 'root') return;
+      for (const part of selectorParts(rule.selector)) {
+        if (/::?after\b/.test(part)) pseudoAfter.add(part.replace(/::?after\b.*$/, '').trim());
+        const entry = declared.get(part) || {};
+        rule.walkDecls((decl) => { entry[decl.prop] = decl.value.trim(); });
+        declared.set(part, entry);
+      }
+    });
+  }
+
+  const spacerFor = (d) => {
+    if (!/^inline-flex$|^flex$/.test(d.display || '')) return null;
+    if ((d['flex-direction'] || 'row') !== 'row') return null;
+    const overflow = postcss.list.space(d.overflow || '');
+    if (!SCROLLING_RE.test(d['overflow-x'] || overflow[0] || '')) return null;
+    if (!/^(|nowrap)$/.test(d['flex-wrap'] || '')) return null;
+    if (!/^(|normal|start|flex-start)$/.test(d['justify-content'] || '')) return null;
+    const padding = d['padding-right'] || d['padding-inline-end'] || boxSide(d.padding, 1);
+    if (!padding || ZERO_LENGTH_RE.test(padding)) return null;
+    const gapValues = postcss.list.space(d.gap || '');
+    const rawGap = d['column-gap'] || gapValues[1] || gapValues[0];
+    const gap = rawGap && !ZERO_LENGTH_RE.test(rawGap) ? rawGap : '';
+    return {
+      modern: "content: ''; flex: 0 0 1px; width: 1px; height: 1px; "
+        + `margin-left: ${gap ? subtract(padding, gap, '1px') : subtract(padding, '1px')}; `
+        + `margin-right: ${subtract('0px', padding)};`,
+      legacy: gap ? `margin-left: ${subtract(padding, '1px')};` : '',
+    };
+  };
+
+  const modern = [];
+  const legacy = [];
+  const emit = (selector, spacer) => {
+    if (pseudoAfter.has(selector)) {
+      throw new Error(`${selector} scrolls with end padding but already styles ::after; `
+        + 'give it a scroll-end spacer by hand');
+    }
+    modern.push(`${selector}::after { ${spacer ? spacer.modern : 'content: none;'} }`);
+    if (spacer && spacer.legacy) legacy.push(`  ${selector}::after { ${spacer.legacy} }`);
+  };
+  const classesOf = (compound) => compound.match(/\.[\w-]+/g) || [];
+  const scrollers = [];
+  for (const [selector, d] of declared) {
+    const spacer = spacerFor(d);
+    if (!spacer) continue;
+    emit(selector, spacer);
+    scrollers.push(selector);
+  }
+  // A compound selector that restyles a scroller (`.tabs.compact`) inherits its
+  // spacer, so recompute it there, or drop it when that variant has no padding.
+  for (const base of scrollers) {
+    if (/[\s>+~]/.test(base)) continue;
+    const baseClasses = classesOf(base);
+    for (const [selector, d] of declared) {
+      if (selector === base || selector.indexOf(':') !== -1) continue;
+      const own = classesOf(lastCompound(selector));
+      if (!baseClasses.every((cls) => own.indexOf(cls) !== -1)) continue;
+      if (!Object.keys(d).some((prop) => SPACER_PROP_RE.test(prop))) continue;
+      emit(selector, spacerFor(Object.assign({}, declared.get(base), d)));
+    }
+  }
+  return { modern, legacy };
+}
+
 export function generateFlexGapFallback(stylesheets) {
   const rules = [];
   const context = collectFlexContext(stylesheets);
@@ -156,9 +259,15 @@ export function generateFlexGapFallback(stylesheets) {
     });
   }
 
+  const spacers = generateScrollEndSpacers(stylesheets);
+  rules.push(...spacers.legacy);
+
   return `/*
  * AUTO-GENERATED by scripts/css-transforms.mjs on every build — do not edit.
  * Checked in so its rules show up in review diffs.
+ *
+ * Scroll-end spacers for horizontal flex scrollers, whose padding-right
+ * Chromium before 91 (webOS 4/5/6/22) leaves out of the scroll width.
  *
  * Margin fallbacks for flex \`gap\`, which webOS 4/5/6 (Chromium 53/68/79) lack.
  * Linked FIRST, before any component CSS: this is the base layer, so a
@@ -166,7 +275,7 @@ export function generateFlexGapFallback(stylesheets) {
  * Hand-written rules that must beat component CSS live in the companion
  * legacy-webos-overrides.css, which is linked last.
  */
-@supports not (inset: 0) {
+${spacers.modern.map((rule) => `${rule}\n`).join('')}@supports not (inset: 0) {
 ${rules.join('\n')}
 }
 `;

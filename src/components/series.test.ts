@@ -62,6 +62,11 @@ async function openWith(cats = [{ id: '1', name: 'Cat A' }], items = [series('s1
 }
 
 describe('Series browse + grid', () => {
+  it('labels See all with the series count', async () => {
+    await openWith([{ id: '1', name: 'Cat A' }], Array.from({ length: 21 }, (_, i) => series(`s${String(i)}`, `Series ${String(i)}`)));
+    expect(container.querySelector('.catalog-see-all')?.textContent).toContain('21 series');
+  });
+
   it('renders a rail per preloaded category with poster tiles', async () => {
     await openWith([{ id: '1', name: 'Cat A' }], [series('s1', 'Series One')]);
     expect(container.querySelector('.catalog-rail-title')?.textContent).toContain('Cat A');

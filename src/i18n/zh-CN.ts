@@ -105,6 +105,13 @@ export const ZH_CN_MESSAGES = {
   'epg.catchupUnavailable': '此节目暂不支持回看。',
   'catalog.continueWatching': '继续观看',
   'catalog.allCategories': '全部分类',
+  'catalog.seeAll': '查看全部',
+  'catalog.movieCount': {
+    other: '共 {count} 部',
+  },
+  'catalog.seriesCount': {
+    other: '共 {count} 部',
+  },
   'catalog.noMovies': '此账号没有可用的电影。',
   'catalog.noMoviesCategory': '此分类暂无电影。',
   'catalog.noSeries': '此账号没有可用的剧集。',

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   convertLegacyColorSyntax,
   generateFlexGapFallback,
+  generateScrollEndSpacers,
   linkedStylesheets,
   scaleFontSizes,
 } from './css-transforms.mjs';
@@ -102,16 +103,94 @@ describe('generateFlexGapFallback', () => {
   });
 });
 
+describe('generateScrollEndSpacers', () => {
+  it('rebuilds a row scroller\'s end padding past its gap, at zero outer size', () => {
+    const { modern, legacy } = generateScrollEndSpacers([`
+      .rail { display: flex; gap: 20px; overflow-x: auto; padding: 12px 12px 20px; }
+    `]);
+    expect(modern).toEqual([
+      ".rail::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: -9px; margin-right: -12px; }",
+    ]);
+    // No gap precedes the spacer where the gap is a sibling margin.
+    expect(legacy).toEqual(['  .rail::after { margin-left: 11px; }']);
+  });
+
+
+  it('resolves declarations split across rules and non-px lengths', () => {
+    const { modern, legacy } = generateScrollEndSpacers([`
+      .tabs { display: flex; padding-right: var(--pad); }
+      .tabs { overflow: auto hidden; }
+    `]);
+    expect(modern).toEqual([
+      ".tabs::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: calc(var(--pad) - 1px); margin-right: calc(0px - var(--pad)); }",
+    ]);
+    expect(legacy).toEqual([]);
+  });
+
+  it('skips containers that do not scroll on their main axis or have no end padding', () => {
+    const { modern } = generateScrollEndSpacers([`
+      .a { display: flex; overflow-y: auto; padding: 10px; }
+      .column { display: flex; flex-direction: column; overflow-x: auto; overflow-y: auto; padding: 10px; }
+      .b { display: flex; overflow-x: auto; padding: 10px 0; }
+      .c { display: block; overflow-x: auto; padding: 10px; }
+      .d { display: flex; overflow-x: hidden; padding: 10px; }
+      .e { display: flex; flex-direction: row-reverse; overflow-x: auto; padding: 10px; }
+      .f { display: flex; flex-wrap: wrap; overflow-x: auto; padding: 10px; }
+      .g { display: flex; justify-content: space-between; overflow-x: auto; padding: 10px; }
+      @media (min-width: 1px) { .h { display: flex; overflow-x: auto; padding: 10px; } }
+    `]);
+    expect(modern).toEqual([]);
+  });
+
+  it('recomputes the spacer for a compound variant of a scroller', () => {
+    const { modern, legacy } = generateScrollEndSpacers([`
+      .tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 8px 0; }
+      .tabs.wide { padding: 8px 12px 0; }
+      .tabs.flush { padding: 0; }
+      .tabs.tinted { color: red; }
+      .wide .tab { padding: 30px; }
+    `]);
+    expect(modern).toEqual([
+      ".tabs::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: 3px; margin-right: -8px; }",
+      ".tabs.wide::after { content: ''; flex: 0 0 1px; width: 1px; height: 1px; margin-left: 7px; margin-right: -12px; }",
+      '.tabs.flush::after { content: none; }',
+    ]);
+    expect(legacy).toEqual([
+      '  .tabs::after { margin-left: 7px; }',
+      '  .tabs.wide::after { margin-left: 11px; }',
+    ]);
+  });
+
+  it('refuses a scroller that already styles ::after', () => {
+    expect(() => generateScrollEndSpacers([`
+      .rail { display: flex; overflow-x: auto; padding: 10px; }
+      .rail::after { content: '>'; }
+    `])).toThrow(/\.rail.*::after/);
+  });
+});
+
 describe('legacy stylesheets', () => {
   // A fallback that is not wrapped in an `@supports not (...)` guard also lands
   // on a modern TV, where it double-applies on top of the real feature. e2e
   // proves this in a browser; here it fails without one.
+  // Scroll-end spacers are the exception: webOS 22 (Chromium 87) passes the
+  // guard but still drops end padding from the scroll width.
+  const cssDir = new URL('../css/', import.meta.url);
+  const spacers = generateScrollEndSpacers(
+    linkedStylesheets(
+      readFileSync(new URL('../index.html', import.meta.url), 'utf8'),
+      readdirSync(cssDir),
+      'legacy-webos-base.css',
+    ).map((file) => readFileSync(new URL(file, cssDir), 'utf8')),
+  ).modern.map((rule) => rule.slice(0, rule.indexOf(' {')));
   for (const file of ['legacy-webos-base.css', 'legacy-webos-overrides.css']) {
     it(`wraps every rule in css/${file} in an @supports guard`, () => {
       const css = readFileSync(new URL(`../css/${file}`, import.meta.url), 'utf8');
       const unguarded = [];
       postcss.parse(css).each((node) => {
         if (node.type === 'comment') return;
+        if (file === 'legacy-webos-base.css' && node.type === 'rule'
+            && spacers.indexOf(node.selector) >= 0) return;
         if (node.type === 'atrule' && node.name === 'supports' && node.params.startsWith('not ')) return;
         unguarded.push(node.type === 'rule' ? node.selector : `@${node.name} ${node.params}`);
       });

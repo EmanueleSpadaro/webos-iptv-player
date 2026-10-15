@@ -10,6 +10,7 @@ import type {
 import { SpatialNav } from '../navigation/spatial-nav';
 import { html, raw, Safe } from '../utils/dom';
 import { categoryLockBadge, lockBadge } from './parental-badge';
+import { SEE_ALL_ICON } from './icons';
 import { morph } from '../utils/morph';
 import { StorageService } from '../services/storage-service';
 import {
@@ -35,6 +36,22 @@ const CATALOG_GRID_VIEWPORT_HEIGHT = 900;
 const CATEGORY_RAIL_STRIDE = 320;
 const CATEGORY_RAIL_VIEWPORT = 1760;
 const GRID_SNAP_DELAY_MS = 95;
+
+// Overrides the CSS smooth-scroll policy for one synchronous scroll. Goes
+// through setProperty, which works whether or not the engine reflects
+// `style.scrollBehavior`.
+function withInstantScroll(nodes: HTMLElement[], scroll: () => void): void {
+  const saved = nodes.map((node) => node.style.getPropertyValue('scroll-behavior'));
+  nodes.forEach((node) => node.style.setProperty('scroll-behavior', 'auto'));
+  try {
+    scroll();
+  } finally {
+    nodes.forEach((node, i) => node.style.setProperty('scroll-behavior', saved[i]));
+  }
+}
+
+// Matches the rail track's padding and its end spacer in catalog-view.css.
+const RAIL_EDGE_GUTTER = 12;
 
 export interface CatalogHandlers {
   onRevealTabBar: () => void;
@@ -70,6 +87,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   protected gridCategory: C | null = null;
   protected deepLinkBack: (() => void) | null = null;
   private gridFocusIndex = 0;
+  // The browse tile that opened a grid or detail, refocused on Back.
   private readonly gridVirtualizer = new VirtualGrid({
     columnStride: CATALOG_GRID_COLUMN_STRIDE,
     rowStride: CATALOG_GRID_ROW_STRIDE,
@@ -153,6 +171,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   protected abstract itemName(item: I): string;
   protected abstract itemPoster(item: I): string;
   protected abstract itemCategoryId(item: I): string;
+  protected abstract itemCount(count: number): string;
   protected abstract readonly parentalKind: 'vod' | 'series';
   protected abstract openDetail(item: I): Promise<void>;
   protected abstract renderDetail(restoreFocus?: boolean): void;
@@ -441,7 +460,8 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
   private onSelect(): void {
     const el = this.nav.focused;
     if (!el || !this.account) return;
-    if (el.dataset.categoryId !== undefined && el.classList.contains('catalog-cat')) {
+    if (el.dataset.categoryId !== undefined
+        && (el.classList.contains('catalog-cat') || el.classList.contains('catalog-see-all'))) {
       void this.openGrid(el.dataset.categoryId);
       return;
     }
@@ -463,10 +483,35 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const categoryCell = el?.closest<HTMLElement>('[data-category-virtual-index]');
     if (this.mode === 'browse' && categoryCell) return;
     if (this.mode !== 'browse' || !el) return;
+    // Pointer focus must not scroll the tile out from under the cursor.
+    if (document.documentElement.classList.contains('keyboard-nav')) this.revealRailGutter(el);
     const id = el.dataset.itemId;
     if (id === undefined) return;
     const item = this.findItem(el.dataset.categoryId ?? '', id);
     if (item) this.updateHero(this.itemName(item), this.itemPoster(item));
+  }
+
+  // scrollIntoView leaves an edge tile flush with the rail's scrollport, which
+  // clips its focus ring; keep a gutter visible beside it.
+  private revealRailGutter(el: HTMLElement): void {
+    const track = el.parentElement;
+    if (!track || !track.classList.contains('catalog-rail-track')) return;
+    const start = el.getBoundingClientRect().left - track.getBoundingClientRect().left
+      - track.clientLeft + track.scrollLeft;
+    const end = start + el.offsetWidth;
+    const current = track.scrollLeft;
+    let target: number;
+    if (start - RAIL_EDGE_GUTTER < current) target = Math.max(0, start - RAIL_EDGE_GUTTER);
+    else if (end + RAIL_EDGE_GUTTER > current + track.clientWidth) {
+      target = end + RAIL_EDGE_GUTTER - track.clientWidth;
+    } else return;
+    // A tile already in view (instant scroll, or none needed) gets an instant
+    // nudge; otherwise retarget the running smooth scroll so it moves once.
+    if (start >= current && end <= current + track.clientWidth) {
+      withInstantScroll([track], () => { track.scrollLeft = target; });
+    } else {
+      track.scrollLeft = target;
+    }
   }
 
   private updateHero(name: string, poster: string): void {
@@ -587,6 +632,27 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     `;
   }
 
+  // A rail shows the first RAIL_ITEMS titles; a trailing tile opens the full grid.
+  private categoryRail(group: { category: C; items: I[] }): Safe {
+    const id = group.category.id;
+    const total = this.itemsByCategory[id]?.length ?? group.items.length;
+    const tiles = group.items.map((it) => this.tile(it));
+    if (total > group.items.length) {
+      tiles.push(html`
+        <div class="catalog-tile catalog-see-all" data-focusable data-key="all:${id}"
+             data-category-id="${id}">
+          <div class="catalog-poster-wrap catalog-see-all-card">
+            ${raw(categoryLockBadge(this.parentalKind, this.account!.id, id))}
+            ${raw(SEE_ALL_ICON)}
+            <div class="catalog-see-all-label">${t('catalog.seeAll')}</div>
+            <div class="catalog-see-all-count">${this.itemCount(total)}</div>
+          </div>
+        </div>
+      `);
+    }
+    return this.rail(`cat:${id}`, group.category.name, tiles);
+  }
+
   protected rail(key: string, title: string, items: Safe[]): Safe {
     return html`
       <div class="catalog-rail" data-key="rail:${key}" data-rail-key="${key}">
@@ -623,11 +689,9 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     // entity encoding is decoded before CSS parses it; percent-encode the
     // characters that could break out of the string.
     const heroBg = hero ? this.itemPoster(hero).replace(/["'()\\\s]/g, encodeURIComponent) : '';
-    // Categories shown as their own poster rail; the "All Categories" rail lists
-    // only the rest, so a category is never both a rail and a tile.
-    const railCatIds: Record<string, true> = {};
-    this.railGroups.forEach((r) => { railCatIds[r.category.id] = true; });
-    const moreCats = this.categories.filter((c) => !railCatIds[c.id]);
+    // Once some categories have no rail, "All Categories" lists every category,
+    // rails included, so it is the one complete index of the catalog.
+    const moreCats = this.categories.length > this.railGroups.length ? this.categories : [];
     const previousCategoryRail = browse.querySelector<HTMLElement>('.catalog-category-rail');
     if (restoreFocus && previousCategoryRail) {
       this.categoryVirtualizer.setScrollOffset(previousCategoryRail.scrollLeft);
@@ -652,11 +716,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
               <div class="catalog-rails-body">
                 ${continueRail}
                 ${watchlistRail}
-                ${this.railGroups.map((r) => this.rail(
-                  `cat:${r.category.id}`,
-                  r.category.name,
-                  r.items.map((it) => this.tile(it)),
-                ))}
+                ${this.railGroups.map((r) => this.categoryRail(r))}
                 ${moreCats.length ? html`
                   <div class="catalog-rail" data-key="rail:all-categories"
                        data-rail-key="all-categories">
@@ -803,12 +863,11 @@ export abstract class CatalogView<C extends { id: string; name: string }, I> {
     const focused = this.nav.focused;
     const cell = focused?.closest<HTMLElement>('[data-category-virtual-index]');
     if (!cell) return false;
-    const railCatIds: Record<string, true> = {};
-    this.railGroups.forEach((group) => { railCatIds[group.category.id] = true; });
-    const categories = this.categories.filter(category => !railCatIds[category.id]);
+    const categories = this.categories;
     const current = parseInt(cell.dataset.categoryVirtualIndex!, 10);
     const next = current + (direction === 'left' ? -1 : 1);
-    if (next < 0 || next >= categories.length) return false;
+    // At either end, stay put: SpatialNav would jump to another rail's tile.
+    if (next < 0 || next >= categories.length) return true;
     const rail = this.layers.browse.querySelector<HTMLElement>('.catalog-category-rail');
     this.categoryVirtualizer.ensureVisible(
       next,

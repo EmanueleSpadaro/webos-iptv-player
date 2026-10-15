@@ -1,4 +1,5 @@
 import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab } from './helpers';
+import { seedXtream } from './fixtures/xtream';
 
 // A minimal ASS body with one dialogue active from t=0, so assjs renders it as
 // soon as it initializes over the (paused, t=0) video.
@@ -73,6 +74,119 @@ async function seedMovies(
     ]));
   });
 }
+
+test('keeps the focus ring clear of the rail edge at See all', async ({ page }) => {
+  await seedMovies(page, { streams: 30 });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'movies');
+  await page.locator('.catalog-tile[data-item-id="100"]')
+    .evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+  for (let i = 0; i < 20; i++) await page.keyboard.press('ArrowRight');
+  const seeAll = page.locator('#view-movies .catalog-see-all');
+  await expect(seeAll).toHaveClass(/focused/);
+  await expect(seeAll).toContainText('30 movies');
+  // The ring (2px offset + 3px outline + 6px glow) must sit inside the track.
+  await expect.poll(() => seeAll.evaluate((el) => {
+    const track = el.parentElement!.getBoundingClientRect();
+    return Math.round(track.right - el.getBoundingClientRect().right);
+  })).toBeGreaterThanOrEqual(11);
+  // Chromium before 91 drops a flex scroller's end padding from its scroll
+  // width, so the room past the last tile must come from content. Drop the
+  // padding here to measure what such an engine would scroll to.
+  expect(await seeAll.evaluate((el) => {
+    const track = el.parentElement!;
+    track.style.paddingRight = '0';
+    const room = track.scrollWidth - (el.offsetLeft + el.offsetWidth - track.offsetLeft);
+    track.style.paddingRight = '';
+    return room;
+  })).toBeGreaterThanOrEqual(12);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#view-movies .catalog-grid-title')).toHaveText('Cat A');
+});
+
+test('Back to See all jumps straight to it under full animation', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('iptv_animation_mode', JSON.stringify('full')));
+  await seedXtream(page, { catalog: 'large' });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'movies');
+  await expect(page.locator('html')).toHaveAttribute('data-animation', 'full');
+  // Walk the rail with the remote, as a viewer would, so See all is scrolled
+  // into view before it opens its grid.
+  await page.locator('#view-movies [data-rail-key="cat:4"] .catalog-tile').first()
+    .evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+  const seeAll = page.locator('#view-movies .catalog-see-all[data-category-id="4"]');
+  for (let i = 0; i < 20; i++) await page.keyboard.press('ArrowRight');
+  await expect(seeAll).toHaveClass(/focused/);
+  await expect.poll(() => seeAll.evaluate((el) => {
+    const track = el.parentElement!.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    return box.left >= track.left && box.right <= track.right && box.top >= 0
+      && box.bottom <= window.innerHeight;
+  })).toBe(true);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#view-movies .catalog-grid-title')).toHaveText('Cat D');
+  // Linger past FOCUS_REPEAT_WINDOW_MS, inside which SpatialNav scrolls
+  // instantly anyway, as a held key would.
+  await page.waitForTimeout(400);
+  // Read the layout in the same task as Back: the resident browse must have
+  // the tile in place already, with no scroll left to replay.
+  const placement = await page.evaluate(() => {
+    const back = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+    Object.defineProperty(back, 'keyCode', { get: () => 27 });
+    document.dispatchEvent(back);
+    const tile = document.querySelector<HTMLElement>('#view-movies .catalog-see-all[data-category-id="4"]')!;
+    const track = tile.parentElement!.getBoundingClientRect();
+    const box = tile.getBoundingClientRect();
+    return {
+      focused: tile.classList.contains('focused'),
+      inTrack: box.left >= track.left && box.right <= track.right,
+      onScreen: box.top >= 0 && box.bottom <= window.innerHeight,
+    };
+  });
+  expect(placement).toEqual({ focused: true, inTrack: true, onScreen: true });
+});
+
+test('Left and Right stop at the ends of All categories', async ({ page }) => {
+  await seedXtream(page, { catalog: 'large' });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'movies');
+  const cats = page.locator('#view-movies .catalog-category-rail .catalog-cat');
+  await expect(cats).toHaveCount(8);
+  const focusedKey = () => page.locator('#view-movies .focused').getAttribute('data-key');
+  await cats.first().evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+  await expect.poll(focusedKey).toBe('c:1');
+  // SpatialNav would otherwise carry focus off the rail to another rail's tile.
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(focusedKey).toBe('c:1');
+  for (let i = 0; i < 7; i++) await page.keyboard.press('ArrowRight');
+  await expect.poll(focusedKey).toBe('c:8');
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(focusedKey).toBe('c:8');
+});
+
+test('gives a scroll-end spacer only to flex containers', async ({ page }) => {
+  await seedXtream(page, { catalog: 'large' });
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  // Outside a flex container the spacer is an inline box with margins, which
+  // Chromium 53 lays out as an extra line that overflows a fixed-height rail.
+  const misplaced = () => page.evaluate(() => [...document.querySelectorAll<HTMLElement>('*')]
+    .filter((el) => {
+      const after = getComputedStyle(el, '::after');
+      return after.content !== 'none' && after.content !== 'normal' && after.flexBasis === '1px'
+        && !/flex/.test(getComputedStyle(el).display);
+    })
+    .map((el) => el.className));
+  await enterTab(page, 'movies');
+  await expect(page.locator('#view-movies .catalog-category-rail')).toBeVisible();
+  expect(await misplaced()).toEqual([]);
+  await enterTab(page, 'epg');
+  await expect(page.locator('#view-epg .epg-date-list')).toBeVisible();
+  expect(await misplaced()).toEqual([]);
+});
 
 test('browse Movies, open a detail, and start playback', async ({ page }) => {
   await seedMovies(page);

@@ -95,8 +95,17 @@ test('a modern engine activates none of the legacy CSS fallbacks', async ({ page
       .filter((sheet) => /legacy-webos-/.test(sheet.href || ''));
     const conditions: { condition: string; active: boolean }[] = [];
     let unguarded = 0;
+    let spacers = 0;
     for (const sheet of legacy) {
       for (const rule of [...(sheet.cssRules || [])]) {
+        // Scroll-end spacers apply on every engine: webOS 22 (Chromium 87)
+        // passes the guards but still drops end padding from scroll width.
+        if (rule instanceof CSSStyleRule && /legacy-webos-base/.test(sheet.href || '')
+            && /::after$/.test(rule.selectorText)
+            && (rule.style.flexBasis === '1px' || rule.style.content === 'none')) {
+          spacers++;
+          continue;
+        }
         if (rule instanceof CSSSupportsRule) {
           conditions.push({ condition: rule.conditionText, active: CSS.supports(rule.conditionText) });
         } else if (!(rule instanceof CSSMediaRule) && rule.constructor.name !== 'CSSComment') {
@@ -104,13 +113,14 @@ test('a modern engine activates none of the legacy CSS fallbacks', async ({ page
         }
       }
     }
-    return { sheets: legacy.length, conditions, unguarded };
+    return { sheets: legacy.length, conditions, unguarded, spacers };
   });
 
   // Both legacy stylesheets must be loaded, or the test would pass vacuously.
   expect(guards.sheets).toBe(2);
   expect(guards.conditions.length).toBeGreaterThan(0);
   expect(guards.unguarded, 'legacy rules outside an @supports guard').toBe(0);
+  expect(guards.spacers).toBeGreaterThan(0);
   for (const guard of guards.conditions) expect(guard.active, guard.condition).toBe(false);
 });
 

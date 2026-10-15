@@ -160,7 +160,9 @@ test('a wide virtual search rail keeps its full scrollable width', async ({ page
   expect(metrics.flexShrink).toBe('0');
   expect(metrics.spacerWidth).toBe(12_000_000);
   expect(metrics.scrollWidth).toBeGreaterThanOrEqual(12_000_000);
-  expect(metrics.scrollLeft).toBe(metrics.scrollWidth - metrics.clientWidth);
+  // Past 2^23px a scroll offset is float-rounded, so allow 1px either way.
+  expect(Math.abs(metrics.scrollLeft - (metrics.scrollWidth - metrics.clientWidth)))
+    .toBeLessThanOrEqual(1);
 });
 
 test('program search shows XMLTV metadata and toggles a future reminder', async ({ page }) => {

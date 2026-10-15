@@ -107,6 +107,13 @@ export const IT_MESSAGES = {
   'epg.catchupUnavailable': 'Questo programma non è disponibile in replay.',
   'catalog.continueWatching': 'Continua a guardare',
   'catalog.allCategories': 'Tutte le categorie',
+  'catalog.seeAll': 'Mostra tutto',
+  'catalog.movieCount': {
+    other: '{count} film',
+  },
+  'catalog.seriesCount': {
+    other: '{count} serie',
+  },
   'catalog.noMovies': 'Nessun film disponibile per questo account.',
   'catalog.noMoviesCategory': 'Nessun film in questa categoria.',
   'catalog.noSeries': 'Nessuna serie disponibile per questo account.',

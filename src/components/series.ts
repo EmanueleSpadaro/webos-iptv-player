@@ -7,7 +7,7 @@ import { xtreamEpisodeUrl, type XtreamCredentials } from '../utils/xtream-url';
 import { CatalogView, type CatalogHandlers } from './catalog-view';
 import { PLAY_ICON, watchlistIcon } from './icons';
 import { showToast } from './toast';
-import { t } from '../i18n';
+import { t, tp } from '../i18n';
 import { VirtualList } from '../utils/virtual-list';
 
 const EPISODE_GAP = 16;
@@ -28,6 +28,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   protected readonly parentalKind = 'series' as const;
   protected get emptyMessage(): string { return t('catalog.noSeries'); }
   protected get gridEmptyMessage(): string { return t('catalog.noSeriesCategory'); }
+  protected itemCount(count: number): string { return tp('catalog.seriesCount', count); }
 
   private currentSeries: SeriesItem | null = null;
   private currentInfo: SeriesInfo | null = null;

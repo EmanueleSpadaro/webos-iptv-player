@@ -1,11 +1,25 @@
 import { SAMPLE_M3U, neuterVideo, type Page } from '../helpers';
 
+const MOVIE_ONE = { stream_id: 10, name: 'Movie One', stream_icon: '', container_extension: 'mp4', category_id: '1' };
+
+// Eight movie categories of 50, so rails end in See all and All Categories
+// appears. Movie One stays first in Cat A.
+const LARGE_CATEGORIES = 'ABCDEFGH'.split('').map((letter, i) => (
+  { category_id: String(i + 1), category_name: `Cat ${letter}` }));
+const largeStreams = (categoryId: string) => Array.from({ length: 50 }, (_, i) => (
+  categoryId === '1' && i === 0 ? MOVIE_ONE : {
+    stream_id: Number(categoryId) * 1000 + i, name: `Movie ${categoryId}-${String(i)}`,
+    stream_icon: '', container_extension: 'mp4', category_id: categoryId,
+  }));
+
 /**
  * A one-account Xtream portal: one movie, one series with one episode, a
  * playable VOD stream and a stubbed online-subtitle provider. Enough to reach
- * every catalog and VOD-player screen. Call before `page.goto`.
+ * every catalog and VOD-player screen. `catalog: 'large'` adds more movie
+ * categories and titles around Movie One. Call before `page.goto`.
  */
-export async function seedXtream(page: Page): Promise<void> {
+export async function seedXtream(page: Page, opts: { catalog?: 'large' } = {}): Promise<void> {
+  const large = opts.catalog === 'large';
   await page.route('**/get.php*', (r) => r.fulfill({
     status: 200,
     contentType: 'application/x-mpegurl',
@@ -18,9 +32,13 @@ export async function seedXtream(page: Page): Promise<void> {
     const json = (body: unknown) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(body),
     });
-    if (url.includes('get_vod_categories')) return json([{ category_id: '1', category_name: 'Cat A' }]);
+    if (url.includes('get_vod_categories')) {
+      return json(large ? LARGE_CATEGORIES : [{ category_id: '1', category_name: 'Cat A' }]);
+    }
     if (url.includes('get_vod_streams')) {
-      return json([{ stream_id: 10, name: 'Movie One', stream_icon: '', container_extension: 'mp4', category_id: '1' }]);
+      return json(large
+        ? largeStreams(new URL(url).searchParams.get('category_id') ?? '1')
+        : [MOVIE_ONE]);
     }
     if (url.includes('get_vod_info')) {
       return json({ info: { plot: 'A plot.', duration_secs: 3600,

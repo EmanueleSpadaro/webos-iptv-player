@@ -110,6 +110,14 @@ export const EN_MESSAGES = {
   'epg.catchupUnavailable': "This program isn't available for catch-up.",
   'catalog.continueWatching': 'Continue Watching',
   'catalog.allCategories': 'All Categories',
+  'catalog.seeAll': 'See all',
+  'catalog.movieCount': {
+    one: '{count} movie',
+    other: '{count} movies',
+  },
+  'catalog.seriesCount': {
+    other: '{count} series',
+  },
   'catalog.noMovies': 'No movies are available for this account.',
   'catalog.noMoviesCategory': 'No movies in this category.',
   'catalog.noSeries': 'No series are available for this account.',

@@ -107,6 +107,15 @@ export const ES_MESSAGES = {
   'epg.catchupUnavailable': 'Este programa no está disponible en catch-up.',
   'catalog.continueWatching': 'Seguir viendo',
   'catalog.allCategories': 'Todas las categorías',
+  'catalog.seeAll': 'Ver todo',
+  'catalog.movieCount': {
+    one: '{count} película',
+    other: '{count} películas',
+  },
+  'catalog.seriesCount': {
+    one: '{count} serie',
+    other: '{count} series',
+  },
   'catalog.noMovies': 'No hay películas disponibles para esta cuenta.',
   'catalog.noMoviesCategory': 'No hay películas en esta categoría.',
   'catalog.noSeries': 'No hay series disponibles para esta cuenta.',

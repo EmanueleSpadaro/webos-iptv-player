@@ -7,7 +7,7 @@ import { xtreamVodUrl } from '../utils/xtream-url';
 import { CatalogView } from './catalog-view';
 import { PLAY_ICON, watchlistIcon } from './icons';
 import { showToast } from './toast';
-import { t } from '../i18n';
+import { t, tp } from '../i18n';
 
 // The Movies section: browse (Continue rail + per-category rails + an "all
 // categories" drill-in) → per-category poster grid → a detail screen with
@@ -18,6 +18,7 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
   protected readonly parentalKind = 'vod' as const;
   protected get emptyMessage(): string { return t('catalog.noMovies'); }
   protected get gridEmptyMessage(): string { return t('catalog.noMoviesCategory'); }
+  protected itemCount(count: number): string { return tp('catalog.movieCount', count); }
 
   private currentVod: VodItem | null = null;
   private currentInfo: VodInfo | null = null;
